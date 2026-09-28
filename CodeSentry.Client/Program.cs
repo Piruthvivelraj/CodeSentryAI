@@ -25,8 +25,8 @@ builder.Services.AddScoped<CodeSentryAI.Services.MockDataService>();
 builder.Services.AddScoped<CodeSentryAI.Services.ToastService>();
 builder.Services.AddBlazoredLocalStorage();
 
-var supabaseUrl = builder.Configuration["Supabase:Url"] ?? throw new InvalidOperationException("Supabase URL is missing.");
-var supabaseKey = builder.Configuration["Supabase:Key"] ?? throw new InvalidOperationException("Supabase Key is missing.");
+var supabaseUrl = builder.Configuration["Supabase:Url"] ?? "https://placeholder.supabase.co";
+var supabaseKey = builder.Configuration["Supabase:Key"] ?? "placeholder";
 
 builder.Services.AddScoped<Supabase.Client>(_ =>
 {
