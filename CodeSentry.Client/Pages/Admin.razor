@@ -1,0 +1,886 @@
+@page "/admin"
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Nav
+@inject CodeSentryAI.Services.ToastService Toast
+@inject IJSRuntime JS
+@using CodeSentryAI.Models
+@using CodeSentryAI.Shared
+
+<PageTitle>CodeSentry AI — Admin Dashboard</PageTitle>
+
+<main class="lg:ml-[64px] mt-[48px] p-margin w-full lg:w-[calc(100%-64px)] min-h-[calc(100vh-48px)] flex flex-col gap-6 page-enter page-wrapper pb-10">
+    @if (isInitializing)
+    {
+        <div class="flex flex-col items-center justify-center flex-1 min-h-[400px] gap-6 text-center">
+            <LoadingSpinner Label="Verifying access..." />
+        </div>
+    }
+    else if (isForbidden)
+    {
+        <div class="flex flex-col items-center justify-center flex-1 min-h-[400px] gap-6 text-center">
+            <div class="w-20 h-20 rounded-full bg-error/10 border border-error/30 flex items-center justify-center text-error animate-pulse">
+                <span class="material-symbols-outlined text-4xl">gpp_bad</span>
+            </div>
+            <div>
+                <h1 class="font-data-lg text-2xl text-error tracking-widest uppercase">Access Denied</h1>
+                <p class="font-data-sm text-outline text-sm mt-2 max-w-md">
+                    You do not have administrator privileges. Please log in with an administrator account to view this panel.
+                </p>
+            </div>
+            <button @onclick='() => Nav.NavigateTo("/")'
+                    class="bg-primary/20 border border-primary text-primary px-6 py-2 rounded font-label-sm uppercase tracking-wider hover:bg-primary/30 transition-all">
+                Return to Dashboard
+            </button>
+        </div>
+    }
+    else
+    {
+        @* ── Page Header ── *@
+        <div class="flex items-center justify-between">
+        <div>
+            <h1 class="font-data-lg text-2xl text-primary tracking-widest uppercase flex items-center gap-3">
+                <span class="material-symbols-outlined">admin_panel_settings</span>
+                Admin Dashboard
+            </h1>
+            <p class="font-data-sm text-outline text-sm mt-1">System-wide management and analytics</p>
+        </div>
+        <button @onclick="RefreshAll"
+                class="bg-primary/20 border border-primary text-primary px-4 py-2 rounded font-label-sm uppercase tracking-wider hover:bg-primary/30 transition-all flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-sm">refresh</span> Refresh
+        </button>
+    </div>
+
+    @* ── Metric Cards Row ── *@
+    @if (isLoadingStats)
+    {
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            @for (int i = 0; i < 5; i++) { <MetricCard Title="Loading" Value="..." IsLoading="true" /> }
+        </div>
+    }
+    else
+    {
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <MetricCard Title="Total Users"    Value="@stats.TotalUsers.ToString()"       Icon="group"              Color="#8B5CF6" Subtitle="Registered" />
+            <MetricCard Title="Total Scans"    Value="@stats.TotalScans.ToString()"       Icon="query_stats"        Color="#3B82F6" Subtitle="All time" />
+            <MetricCard Title="Repositories"   Value="@stats.TotalRepos.ToString()"       Icon="source"             Color="#10B981" Subtitle="Unique repos" />
+            <MetricCard Title="Critical Issues" Value="@stats.TotalCritical.ToString()"   Icon="warning"            Color="#EF4444" Subtitle="Total found" />
+            <MetricCard Title="API Keys"        Value="@stats.TotalApiKeys.ToString()"    Icon="vpn_key"            Color="#F59E0B" Subtitle="Active keys" />
+        </div>
+    }
+
+    @* ── Two-column layout: Users + Activity ── *@
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+
+        @* ── Users Table (2/3 width) ── *@
+        <div class="xl:col-span-2 glass-panel level-1-border rounded bg-[#0F1117] flex flex-col overflow-hidden">
+            <div class="p-4 border-b border-outline-variant/30 flex items-center justify-between gap-4 bg-surface/40 shrink-0 flex-wrap">
+                <h2 class="font-section-header text-outline tracking-widest uppercase text-sm flex items-center gap-2">
+                    <span class="material-symbols-outlined text-sm text-primary">group</span> User Management
+                </h2>
+                <div class="flex items-center gap-3">
+                    <button @onclick="() => showAddUserModal = true"
+                            class="bg-primary border border-primary text-[#0F1117] px-3 py-1.5 rounded text-xs uppercase tracking-wider hover:bg-primary/90 transition-all font-bold flex items-center gap-1">
+                        <span class="material-symbols-outlined text-sm">person_add</span> Add User
+                    </button>
+                    <div class="w-64">
+                        <SearchBar @bind-Value="userSearch" Placeholder="Search users..." />
+                    </div>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto flex-1">
+                <table class="w-full text-left border-collapse text-sm">
+                    <thead class="sticky top-0 bg-[#0F1117] z-10 border-b border-outline-variant/30">
+                        <tr>
+                            <th @onclick='() => SortUsers("Email")' class="font-label-sm text-outline uppercase px-4 py-3 text-xs cursor-pointer hover:text-primary">User</th>
+                            <th @onclick='() => SortUsers("PlanType")' class="font-label-sm text-outline uppercase px-4 py-3 text-xs hidden md:table-cell cursor-pointer hover:text-primary">Plan</th>
+                            <th @onclick='() => SortUsers("TotalScans")' class="font-label-sm text-outline uppercase px-4 py-3 text-xs hidden lg:table-cell cursor-pointer hover:text-primary">Scans</th>
+                            <th class="font-label-sm text-outline uppercase px-4 py-3 text-xs text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (isLoadingUsers)
+                        {
+                            <SkeletonLoader Type="table" Count="5" Columns="4" />
+                        }
+                        else if (filteredUsers.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="4">
+                                    <div class="flex flex-col items-center justify-center py-12 gap-3">
+                                        <span class="material-symbols-outlined text-outline text-4xl opacity-30">person_search</span>
+                                        <p class="font-body-md text-outline text-sm">No users found</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            @foreach (var user in filteredUsers)
+                            {
+                                var planColor = user.PlanType switch {
+                                    "PRO"  => "#3B82F6",
+                                    "TEAM" => "#8B5CF6",
+                                    _      => "#6B7280"
+                                };
+                                <tr class="border-b border-outline-variant/10 hover:bg-white/5 transition-colors group">
+                                    <td class="px-4 py-3">
+                                        <div class="flex items-center gap-3">
+                                            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
+                                                 style="background: @(planColor)20; border: 1px solid @(planColor)50; color: @planColor;">
+                                                @(string.IsNullOrEmpty(user.DisplayName) 
+                                                    ? (string.IsNullOrEmpty(user.Email) ? "U" : user.Email.Substring(0, 1).ToUpper())
+                                                    : user.DisplayName.Substring(0, 1).ToUpper())
+                                            </div>
+                                            <div>
+                                                <div class="font-data-sm text-on-surface text-sm">
+                                                    @(string.IsNullOrEmpty(user.DisplayName) ? (string.IsNullOrEmpty(user.Email) ? "Unknown User" : user.Email) : user.DisplayName)
+                                                </div>
+                                                <div class="font-data-sm text-outline text-xs">@(string.IsNullOrEmpty(user.Email) ? "No Email Provided" : user.Email)</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3 hidden md:table-cell">
+                                        <div class="flex items-center gap-2">
+                                            <span class="px-2 py-0.5 rounded text-xs font-bold uppercase"
+                                                  style="background: @(planColor)20; color: @planColor; border: 1px solid @(planColor)40;">
+                                                @user.PlanType
+                                            </span>
+                                            @if (!user.IsActive)
+                                            {
+                                                <span class="px-2 py-0.5 rounded text-xs font-bold uppercase bg-error/20 text-error border border-error/40">
+                                                    Suspended
+                                                </span>
+                                            }
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3 text-outline hidden lg:table-cell">@user.TotalScans</td>
+                                    <td class="px-4 py-3 text-right">
+                                        <div class="flex items-center gap-2 justify-end">
+                                            <button @onclick="() => ResendEmail(user)"
+                                                    title="Resend verification email"
+                                                    class="text-xs px-2 py-1 border border-outline-variant/30 text-outline hover:text-primary hover:border-primary rounded transition-colors uppercase tracking-wider">
+                                                <span class="material-symbols-outlined text-sm">mail</span>
+                                            </button>
+                                            <button @onclick="() => CyclePlan(user)"
+                                                    title="Change plan"
+                                                    class="text-xs px-2 py-1 border border-outline-variant/30 text-outline hover:text-primary hover:border-primary rounded transition-colors uppercase tracking-wider">
+                                                <span class="material-symbols-outlined text-sm">upgrade</span>
+                                            </button>
+                                            <button @onclick="() => ToggleUserStatus(user)"
+                                                    title="@(user.IsActive ? "Suspend User" : "Activate User")"
+                                                    class="text-xs px-2 py-1 border border-outline-variant/30 text-outline hover:text-warning hover:border-warning rounded transition-colors uppercase tracking-wider">
+                                                <span class="material-symbols-outlined text-sm">@(user.IsActive ? "block" : "check_circle")</span>
+                                            </button>
+                                            <button @onclick="() => PromptDeleteUser(user)"
+                                                    title="Delete User"
+                                                    class="text-xs px-2 py-1 border border-outline-variant/30 text-outline hover:text-error hover:border-error rounded transition-colors uppercase tracking-wider">
+                                                <span class="material-symbols-outlined text-sm">delete</span>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        @* ── Activity Feed (1/3 width) ── *@
+        <div class="glass-panel level-1-border rounded bg-[#0F1117] flex flex-col overflow-hidden">
+            <div class="p-4 border-b border-outline-variant/30 bg-surface/40 shrink-0">
+                <h2 class="font-section-header text-outline tracking-widest uppercase text-sm flex items-center gap-2">
+                    <span class="material-symbols-outlined text-sm text-tertiary">timeline</span> Recent Activity
+                </h2>
+            </div>
+            @if (isLoadingActivity)
+            {
+                <LoadingSpinner Label="Loading activity..." />
+            }
+            else if (activityFeed.Count == 0)
+            {
+                <div class="flex flex-col items-center justify-center py-12 gap-3">
+                    <span class="material-symbols-outlined text-outline text-4xl opacity-30">history</span>
+                    <p class="font-body-md text-outline text-sm">No activity yet</p>
+                </div>
+            }
+            else
+            {
+                <div class="overflow-y-auto flex-1 divide-y divide-outline-variant/10">
+                    @foreach (var act in activityFeed)
+                    {
+                        <div class="flex items-start gap-3 p-3 hover:bg-white/5 transition-colors">
+                            <span class="material-symbols-outlined text-sm mt-0.5 flex-shrink-0" style="color: @act.Color;">@act.Icon</span>
+                            <div class="flex-1 min-w-0">
+                                <p class="font-data-sm text-on-surface text-xs leading-snug truncate">@act.Message</p>
+                                @if (act.Score > 0)
+                                {
+                                    <span class="font-label-sm text-xs" style="color: @CodeSentryAI.Utils.UIHelper.GetScoreHex(act.Score);">
+                                        Score: @act.Score/100
+                                    </span>
+                                }
+                                <p class="font-data-sm text-outline text-[10px] mt-0.5">@TimeAgo(act.Timestamp)</p>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    @* ── Scan Management Table ── *@
+    <div class="glass-panel level-1-border rounded bg-[#0F1117] flex flex-col overflow-hidden">
+        <div class="p-4 border-b border-outline-variant/30 bg-surface/40 shrink-0 flex items-center justify-between flex-wrap gap-4">
+            <h2 class="font-section-header text-outline tracking-widest uppercase text-sm flex items-center gap-2">
+                <span class="material-symbols-outlined text-sm text-primary">manage_search</span>
+                Scan Management
+                @if (!isLoadingScans)
+                {
+                    <span class="font-data-sm text-outline text-xs normal-case">(@totalScans total)</span>
+                }
+            </h2>
+            <div class="flex items-center gap-3 flex-wrap">
+                @* Status filter *@
+                <select @bind="scanStatusFilter"
+                        class="bg-surface-container border border-outline-variant/40 text-on-surface text-xs px-3 py-2 rounded font-data-sm outline-none focus:border-primary">
+                    <option value="">All Statuses</option>
+                    <option value="COMPLETED">Completed</option>
+                    <option value="FAILED">Failed</option>
+                    <option value="CLONING">In Progress</option>
+                </select>
+                <div class="w-56">
+                    <SearchBar @bind-Value="scanSearch" Placeholder="Search scans..." />
+                </div>
+                <button @onclick="ApplyScanFilter"
+                        class="bg-primary/20 border border-primary text-primary px-3 py-1.5 rounded text-xs uppercase tracking-wider hover:bg-primary/30 transition-all">
+                    Filter
+                </button>
+            </div>
+        </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-sm">
+                    <thead class="bg-[#0F1117] border-b border-outline-variant/30 z-10">
+                        <tr>
+                            <th @onclick='() => SortScans("RepositoryName")' class="font-label-sm text-outline uppercase px-4 py-3 text-xs cursor-pointer hover:text-primary">Repository</th>
+                            <th @onclick='() => SortScans("Status")' class="font-label-sm text-outline uppercase px-4 py-3 text-xs hidden md:table-cell cursor-pointer hover:text-primary">Status</th>
+                            <th @onclick='() => SortScans("Score")' class="font-label-sm text-outline uppercase px-4 py-3 text-xs hidden lg:table-cell cursor-pointer hover:text-primary">Score</th>
+                            <th class="font-label-sm text-outline uppercase px-4 py-3 text-xs hidden lg:table-cell">Issues</th>
+                            <th @onclick='() => SortScans("CreatedAt")' class="font-label-sm text-outline uppercase px-4 py-3 text-xs hidden xl:table-cell cursor-pointer hover:text-primary">Date</th>
+                            <th class="font-label-sm text-outline uppercase px-4 py-3 text-xs text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (isLoadingScans)
+                        {
+                            <SkeletonLoader Type="table" Count="5" Columns="6" />
+                        }
+                        else if (scans.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="6">
+                                    <div class="flex flex-col items-center justify-center py-12 gap-3">
+                                        <span class="material-symbols-outlined text-outline text-4xl opacity-30">search_off</span>
+                                        <p class="font-body-md text-outline text-sm">No scans found</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            @foreach (var scan in scans)
+                            {
+                                var scoreColor = scan.Score >= 80 ? "#10B981" : scan.Score >= 50 ? "#F59E0B" : "#EF4444";
+                                var statusColor = scan.Status == "COMPLETED" ? "#10B981"
+                                               : scan.Status == "FAILED"    ? "#EF4444"
+                                                                             : "#3B82F6";
+                                <tr class="border-b border-outline-variant/10 hover:bg-white/5 transition-colors">
+                                    <td class="px-4 py-3">
+                                        <div class="font-data-sm text-on-surface">
+                                            @(string.IsNullOrEmpty(scan.RepositoryName) ? scan.ScanId : scan.RepositoryName)
+                                        </div>
+                                        <div class="font-data-sm text-outline text-[10px]">@scan.ScanId</div>
+                                    </td>
+                                    <td class="px-4 py-3 hidden md:table-cell">
+                                        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                                              style="background: @(statusColor)20; color: @statusColor; border: 1px solid @(statusColor)40;">
+                                            @scan.Status
+                                        </span>
+                                    </td>
+                                    <td class="px-4 py-3 hidden lg:table-cell">
+                                        @if (scan.Score > 0)
+                                        {
+                                            <span class="font-data-md text-sm font-bold" style="color: @scoreColor;">@scan.Score</span>
+                                            <span class="text-outline text-xs">/100</span>
+                                        }
+                                        else { <span class="text-outline text-xs">—</span> }
+                                    </td>
+                                    <td class="px-4 py-3 hidden lg:table-cell">
+                                        <span class="text-outline text-xs">
+                                            <span class="text-error font-bold">@scan.CriticalIssues C</span>
+                                            &nbsp;/&nbsp;
+                                            @scan.TotalIssues total
+                                        </span>
+                                    </td>
+                                    <td class="px-4 py-3 text-outline text-xs hidden xl:table-cell">
+                                        @scan.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")
+                                    </td>
+                                    <td class="px-4 py-3 text-right">
+                                        <div class="flex items-center gap-2 justify-end">
+                                            <button @onclick="@(() => Nav.NavigateTo($"/reports?scanId={scan.ScanId}"))"
+                                                    title="View report"
+                                                    class="text-primary hover:text-primary-fixed transition-colors">
+                                                <span class="material-symbols-outlined text-base">open_in_new</span>
+                                            </button>
+                                            <button @onclick="() => PromptDeleteScan(scan)"
+                                                    title="Delete scan"
+                                                    class="text-error hover:text-error/80 transition-colors">
+                                                <span class="material-symbols-outlined text-base">delete</span>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* Pagination *@
+            @if (totalScans > pageSize)
+            {
+                <div class="p-3 border-t border-outline-variant/20 flex items-center justify-between">
+                    <span class="font-data-sm text-outline text-xs">
+                        Showing @((currentPage - 1) * pageSize + 1)–@(Math.Min(currentPage * pageSize, totalScans)) of @totalScans
+                    </span>
+                    <div class="flex gap-2">
+                        <button @onclick="PrevPage" disabled="@(currentPage <= 1)"
+                                class="px-3 py-1 border border-outline-variant/30 text-outline text-xs rounded disabled:opacity-40 hover:border-primary hover:text-primary transition-colors">
+                            ← Prev
+                        </button>
+                        <button @onclick="NextPage" disabled="@(currentPage * pageSize >= totalScans)"
+                                class="px-3 py-1 border border-outline-variant/30 text-outline text-xs rounded disabled:opacity-40 hover:border-primary hover:text-primary transition-colors">
+                            Next →
+                        </button>
+                    </div>
+                </div>
+            }
+    </div>
+}
+</main>
+
+@* ── Confirmation Dialog ── *@
+<ConfirmDialog IsVisible="showDeleteConfirm"
+               Title="Delete Scan?"
+               Message="@($"Permanently delete scan for '{deleteScanTarget?.RepositoryName ?? deleteScanTarget?.ScanId}'? This cannot be undone.")"
+               ConfirmLabel="Delete"
+               Danger="true"
+               OnConfirm="ExecuteDeleteScan"
+               OnCancel="@(() => showDeleteConfirm = false)" />
+
+<ConfirmDialog IsVisible="showPlanConfirm"
+               Title="Change User Plan?"
+               Message="@($"Change {planChangeUser?.Email} from {planChangeUser?.PlanType} to {nextPlan(planChangeUser?.PlanType ?? "FREE")}?")"
+               ConfirmLabel="Change Plan"
+               Danger="false"
+               OnConfirm="ExecutePlanChange"
+               OnCancel="@(() => showPlanConfirm = false)" />
+
+<ConfirmDialog Title="Delete User"
+               Message="@($"Are you sure you want to permanently delete {deleteUserTarget?.Email}? This action cannot be undone.")"
+               IsVisible="showUserDeleteConfirm"
+               ConfirmLabel="Delete User"
+               Danger="true"
+               OnConfirm="ExecuteDeleteUser"
+               OnCancel="@(() => showUserDeleteConfirm = false)" />
+
+@if (showAddUserModal)
+{
+    <div class="fixed inset-0 bg-[#000000]/80 backdrop-blur-sm z-50 flex items-center justify-center fade-in p-4">
+        <div class="bg-[#0F1117] border border-outline-variant/30 rounded-lg w-full max-w-md overflow-hidden shadow-2xl modal-enter">
+            <div class="p-6 border-b border-outline-variant/30 flex items-center justify-between">
+                <h3 class="font-section-header text-on-surface text-lg flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">person_add</span>
+                    Create New User
+                </h3>
+                <button @onclick="() => showAddUserModal = false" class="text-outline hover:text-on-surface transition-colors">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            
+            <div class="p-6 flex flex-col gap-4">
+                <div>
+                    <label class="block font-label-sm text-outline text-xs uppercase mb-1">Email</label>
+                    <input type="email" @bind="newUserEmail" 
+                           class="w-full bg-[#1A1D24] border border-outline-variant/30 rounded px-3 py-2 text-sm text-on-surface focus:border-primary outline-none transition-colors"
+                           placeholder="user@example.com" />
+                </div>
+                <div>
+                    <label class="block font-label-sm text-outline text-xs uppercase mb-1">Password</label>
+                    <input type="password" @bind="newUserPassword" 
+                           class="w-full bg-[#1A1D24] border border-outline-variant/30 rounded px-3 py-2 text-sm text-on-surface focus:border-primary outline-none transition-colors"
+                           placeholder="Minimum 6 characters" />
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-label-sm text-outline text-xs uppercase mb-1">Plan</label>
+                        <select @bind="newUserPlan" 
+                                class="w-full bg-[#1A1D24] border border-outline-variant/30 rounded px-3 py-2 text-sm text-on-surface focus:border-primary outline-none transition-colors">
+                            <option value="FREE">FREE</option>
+                            <option value="PRO">PRO</option>
+                            <option value="TEAM">TEAM</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-2 pt-6">
+                        <input type="checkbox" id="isAdminCheck" @bind="newUserIsAdmin" class="accent-primary" />
+                        <label for="isAdminCheck" class="font-data-sm text-on-surface text-sm">Admin privileges</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-outline-variant/30 bg-surface/30 flex justify-end gap-3">
+                <button @onclick="() => showAddUserModal = false" class="px-4 py-2 font-label-sm uppercase tracking-wider text-outline hover:text-on-surface transition-colors text-xs">
+                    Cancel
+                </button>
+                <button @onclick="CreateUser" disabled="@isCreatingUser"
+                        class="bg-primary text-[#0F1117] px-6 py-2 rounded font-label-sm uppercase tracking-wider hover:bg-primary/90 transition-colors flex items-center gap-2 text-xs disabled:opacity-50">
+                    @if (isCreatingUser)
+                    {
+                        <span class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                        <span>Creating...</span>
+                    }
+                    else
+                    {
+                        <span class="material-symbols-outlined text-sm">save</span>
+                        <span>Create User</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+
+    // ── Models ──────────────────────────────────────────────────────────────────
+    private class AdminStatsDto
+    {
+        public int TotalUsers    { get; set; }
+        public int TotalScans    { get; set; }
+        public int TotalApiKeys  { get; set; }
+        public int TotalCritical { get; set; }
+        public int TotalIssues   { get; set; }
+        public int TotalRepos    { get; set; }
+        public int AvgHealthScore { get; set; }
+        public int CompletedScans { get; set; }
+    }
+
+    private class AdminUserDto
+    {
+        public string SupabaseId  { get; set; } = "";
+        public string Email       { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string PlanType    { get; set; } = "FREE";
+        public int    ScansThisMonth { get; set; }
+        public int    TotalScans  { get; set; }
+        public DateTime LastLogin { get; set; }
+        public bool   IsActive    { get; set; } = true;
+        public bool   IsAdmin     { get; set; } = false;
+    }
+
+    private class AdminScanDto
+    {
+        public string   ScanId         { get; set; } = "";
+        public string   Status         { get; set; } = "";
+        public string   RepositoryName { get; set; } = "";
+        public string?  UserId         { get; set; }
+        public DateTime CreatedAt      { get; set; }
+        public int      HealthScore    { get; set; }
+        public int      Score          { get; set; }
+        public int      TotalIssues    { get; set; }
+        public int      CriticalIssues { get; set; }
+    }
+
+    private class ActivityItem
+    {
+        public string   Icon      { get; set; } = "info";
+        public string   Color     { get; set; } = "#6B7280";
+        public string   Message   { get; set; } = "";
+        public DateTime Timestamp { get; set; }
+        public int      Score     { get; set; }
+    }
+
+    // ── State ───────────────────────────────────────────────────────────────────
+    private AdminStatsDto     stats         = new();
+    private List<AdminUserDto> users        = new();
+    private List<AdminScanDto> scans        = new();
+    private List<ActivityItem> activityFeed = new();
+
+    private bool isLoadingStats    = true;
+    private bool isLoadingUsers    = true;
+    private bool isLoadingScans    = true;
+    private bool isLoadingActivity = true;
+    private bool isForbidden       = false;
+    private bool isInitializing    = true;
+
+    private string userSearch       = "";
+    private string scanSearch       = "";
+    private string scanStatusFilter = "";
+    private int    currentPage      = 1;
+    private int    pageSize         = 20;
+    private int    totalScans       = 0;
+
+    // Confirmation state
+    private bool         showDeleteConfirm = false;
+    private AdminScanDto? deleteScanTarget  = null;
+    private bool         showPlanConfirm   = false;
+    private AdminUserDto? planChangeUser    = null;
+    
+    private bool         showUserDeleteConfirm = false;
+    private AdminUserDto? deleteUserTarget     = null;
+
+    private bool         showAddUserModal  = false;
+    private bool         isCreatingUser    = false;
+    private string       newUserEmail      = "";
+    private string       newUserPassword   = "";
+    private string       newUserPlan       = "FREE";
+    private bool         newUserIsAdmin    = false;
+
+    private string userSortColumn = "Email";
+    private bool userSortAscending = true;
+
+    private List<AdminUserDto> filteredUsers
+    {
+        get
+        {
+            var list = string.IsNullOrWhiteSpace(userSearch)
+                ? users
+                : users.Where(u =>
+                    u.Email.Contains(userSearch, StringComparison.OrdinalIgnoreCase) ||
+                    u.DisplayName.Contains(userSearch, StringComparison.OrdinalIgnoreCase))
+                  .ToList();
+
+            return userSortColumn switch
+            {
+                "PlanType"   => userSortAscending ? list.OrderBy(u => u.PlanType).ToList() : list.OrderByDescending(u => u.PlanType).ToList(),
+                "TotalScans" => userSortAscending ? list.OrderBy(u => u.TotalScans).ToList() : list.OrderByDescending(u => u.TotalScans).ToList(),
+                _            => userSortAscending ? list.OrderBy(u => u.Email).ToList() : list.OrderByDescending(u => u.Email).ToList()
+            };
+        }
+    }
+
+    // ── Lifecycle ───────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync() => await RefreshAll();
+
+    private async Task RefreshAll()
+    {
+        isInitializing = true;
+        await Task.WhenAll(LoadStats(), LoadUsers(), LoadScans(), LoadActivity());
+        isInitializing = false;
+        StateHasChanged();
+    }
+
+    // ── Data Loading ─────────────────────────────────────────────────────────────
+    private async Task LoadStats()
+    {
+        isLoadingStats = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var raw = await client.GetFromJsonAsync<System.Text.Json.JsonElement>("api/admin/stats");
+            stats = new AdminStatsDto
+            {
+                TotalUsers    = raw.GetProperty("totalUsers")    .GetInt32(),
+                TotalScans    = raw.GetProperty("totalScans")    .GetInt32(),
+                TotalApiKeys  = raw.GetProperty("totalApiKeys")  .GetInt32(),
+                TotalCritical = raw.GetProperty("totalCritical") .GetInt32(),
+                TotalIssues   = raw.GetProperty("totalIssues")   .GetInt32(),
+                TotalRepos    = raw.GetProperty("totalRepos")    .GetInt32(),
+                AvgHealthScore = raw.GetProperty("avgHealthScore").GetInt32(),
+                CompletedScans = raw.GetProperty("completedScans").GetInt32()
+            };
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            isForbidden = true;
+        }
+        catch { stats = new(); }
+        finally { isLoadingStats = false; StateHasChanged(); }
+    }
+
+    private async Task LoadUsers()
+    {
+        isLoadingUsers = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            users = await client.GetFromJsonAsync<List<AdminUserDto>>("api/admin/users") ?? new();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            isForbidden = true;
+        }
+        catch { users = new(); }
+        finally { isLoadingUsers = false; StateHasChanged(); }
+    }
+
+    private async Task LoadScans()
+    {
+        isLoadingScans = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var url = $"api/admin/scans?page={currentPage}&size={pageSize}&sortBy={scanSortColumn}&sortAscending={scanSortAscending}";
+            if (!string.IsNullOrWhiteSpace(scanSearch))       url += $"&search={Uri.EscapeDataString(scanSearch)}";
+            if (!string.IsNullOrWhiteSpace(scanStatusFilter)) url += $"&status={scanStatusFilter}";
+
+            var raw = await client.GetFromJsonAsync<System.Text.Json.JsonElement>(url);
+            totalScans = raw.GetProperty("total").GetInt32();
+            scans = System.Text.Json.JsonSerializer.Deserialize<List<AdminScanDto>>(
+                        raw.GetProperty("scans").GetRawText(),
+                        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? new();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            isForbidden = true;
+        }
+        catch { scans = new(); }
+        finally { isLoadingScans = false; StateHasChanged(); }
+    }
+
+    private async Task LoadActivity()
+    {
+        isLoadingActivity = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            activityFeed = await client.GetFromJsonAsync<List<ActivityItem>>("api/admin/activity") ?? new();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            isForbidden = true;
+        }
+        catch { activityFeed = new(); }
+        finally { isLoadingActivity = false; StateHasChanged(); }
+    }
+
+    // ── User Plan Management ─────────────────────────────────────────────────────
+    private void CyclePlan(AdminUserDto user)
+    {
+        planChangeUser  = user;
+        showPlanConfirm = true;
+    }
+
+    private string nextPlan(string current) => current switch
+    {
+        "FREE" => "PRO",
+        "PRO"  => "TEAM",
+        _      => "FREE"
+    };
+
+    private async Task ExecutePlanChange()
+    {
+        showPlanConfirm = false;
+        if (planChangeUser == null) return;
+
+        try
+        {
+            var client   = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var newPlan  = nextPlan(planChangeUser.PlanType);
+            var response = await client.PatchAsJsonAsync(
+                $"api/admin/users/{planChangeUser.SupabaseId}/plan",
+                new { PlanType = newPlan });
+
+            if (response.IsSuccessStatusCode)
+            {
+                planChangeUser.PlanType = newPlan;
+                Toast.ShowSuccess($"Plan updated to {newPlan} for {planChangeUser.Email}");
+                StateHasChanged();
+            }
+            else
+            {
+                Toast.ShowError("Failed to update plan.");
+            }
+        }
+        catch { Toast.ShowError("Error updating plan."); }
+    }
+
+    private async Task ToggleUserStatus(AdminUserDto user)
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var res = await client.PatchAsync($"api/admin/users/{user.SupabaseId}/status", null);
+            if (res.IsSuccessStatusCode)
+            {
+                user.IsActive = !user.IsActive;
+                Toast.ShowSuccess($"User {(user.IsActive ? "activated" : "suspended")} successfully.");
+                StateHasChanged();
+            }
+            else Toast.ShowError("Failed to toggle status.");
+        }
+        catch { Toast.ShowError("Error toggling status."); }
+    }
+
+    private void PromptDeleteUser(AdminUserDto user)
+    {
+        deleteUserTarget = user;
+        showUserDeleteConfirm = true;
+    }
+
+    private async Task ExecuteDeleteUser()
+    {
+        showUserDeleteConfirm = false;
+        if (deleteUserTarget == null) return;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var res = await client.DeleteAsync($"api/admin/users/{deleteUserTarget.SupabaseId}");
+            if (res.IsSuccessStatusCode)
+            {
+                users.Remove(deleteUserTarget);
+                Toast.ShowSuccess("User deleted successfully.");
+                StateHasChanged();
+            }
+            else Toast.ShowError("Failed to delete user.");
+        }
+        catch { Toast.ShowError("Error deleting user."); }
+    }
+
+    private async Task ResendEmail(AdminUserDto user)
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var res = await client.PostAsync($"api/admin/users/{user.SupabaseId}/resend-email", null);
+            if (res.IsSuccessStatusCode)
+            {
+                Toast.ShowSuccess($"Verification email sent to {user.Email}.");
+            }
+            else Toast.ShowError("Failed to resend email.");
+        }
+        catch { Toast.ShowError("Error resending email."); }
+    }
+
+    private async Task CreateUser()
+    {
+        if (string.IsNullOrWhiteSpace(newUserEmail) || string.IsNullOrWhiteSpace(newUserPassword))
+        {
+            Toast.ShowError("Email and Password are required.");
+            return;
+        }
+
+        isCreatingUser = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var req = new
+            {
+                Email = newUserEmail,
+                Password = newUserPassword,
+                PlanType = newUserPlan,
+                IsAdmin = newUserIsAdmin
+            };
+            var res = await client.PostAsJsonAsync("api/admin/users", req);
+            if (res.IsSuccessStatusCode)
+            {
+                Toast.ShowSuccess("User created successfully.");
+                showAddUserModal = false;
+                newUserEmail = "";
+                newUserPassword = "";
+                newUserPlan = "FREE";
+                newUserIsAdmin = false;
+                await LoadUsers(); // Reload to get the new user
+            }
+            else
+            {
+                var err = await res.Content.ReadAsStringAsync();
+                Toast.ShowError($"Failed: {err}");
+            }
+        }
+        catch { Toast.ShowError("Error creating user."); }
+        finally
+        {
+            isCreatingUser = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Scan Management ──────────────────────────────────────────────────────────
+    private void PromptDeleteScan(AdminScanDto scan)
+    {
+        deleteScanTarget  = scan;
+        showDeleteConfirm = true;
+    }
+
+    private async Task ExecuteDeleteScan()
+    {
+        showDeleteConfirm = false;
+        if (deleteScanTarget == null) return;
+
+        try
+        {
+            var client   = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var response = await client.DeleteAsync($"api/admin/scans/{deleteScanTarget.ScanId}");
+            if (response.IsSuccessStatusCode)
+            {
+                scans.Remove(deleteScanTarget);
+                totalScans = Math.Max(0, totalScans - 1);
+                stats.TotalScans = Math.Max(0, stats.TotalScans - 1);
+                Toast.ShowSuccess($"Scan deleted successfully.");
+                StateHasChanged();
+            }
+            else { Toast.ShowError("Failed to delete scan."); }
+        }
+        catch { Toast.ShowError("Error deleting scan."); }
+    }
+
+    // ── Filtering + Pagination ───────────────────────────────────────────────────
+    private async Task ApplyScanFilter()
+    {
+        currentPage = 1;
+        await LoadScans();
+    }
+
+    private async Task PrevPage()
+    {
+        if (currentPage > 1) { currentPage--; await LoadScans(); }
+    }
+
+    private async Task NextPage()
+    {
+        if (currentPage * pageSize < totalScans) { currentPage++; await LoadScans(); }
+    }
+
+    // ── Sorting ──────────────────────────────────────────────────────────────────
+    private void SortUsers(string column)
+    {
+        if (userSortColumn == column) userSortAscending = !userSortAscending;
+        else { userSortColumn = column; userSortAscending = true; }
+    }
+
+    private string scanSortColumn = "CreatedAt";
+    private bool scanSortAscending = false;
+
+    private async Task SortScans(string column)
+    {
+        if (scanSortColumn == column) scanSortAscending = !scanSortAscending;
+        else { scanSortColumn = column; scanSortAscending = column == "CreatedAt" ? false : true; }
+        
+        await LoadScans();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────────
+    private static string TimeAgo(DateTime dt)
+    {
+        var utcTime = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+        var diff = DateTime.UtcNow - utcTime;
+        if (diff.TotalMinutes < 1)  return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours   < 24) return $"{(int)diff.TotalHours}h ago";
+        return $"{(int)diff.TotalDays}d ago";
+    }
+}

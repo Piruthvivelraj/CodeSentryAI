@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.npm/
+
+# .NET Build artifacts
+[Bb]in/
+[Oo]bj/
+*.exe
+*.dll
+*.pdb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# IDE folders
+.vs/
+.idea/
+.vscode/
+*.swp
+*.lut
+*.desktop
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# Supabase / Local Secrets
+appsettings.json
+appsettings.Development.json
+secrets.json
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+logs/
+*.log
+
+# WebAssembly
+wwwroot/_framework/
+wwwroot/dist/

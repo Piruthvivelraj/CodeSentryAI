@@ -1,0 +1,411 @@
+@page "/login"
+@layout EmptyLayout
+@inject Supabase.Client Supabase
+@inject NavigationManager Nav
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IHttpClientFactory HttpClientFactory
+
+<PageTitle>CodeSentry AI — Secure Uplink</PageTitle>
+
+<div class="login-split page-wrapper">
+    @* === LEFT: Auth Form Panel === *@
+    <div class="login-form-panel">
+        <div class="login-card glass-panel level-1-border p-8 rounded-DEFAULT relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-transparent opacity-50"></div>
+            
+            <div class="text-center mb-8">
+                <span class="material-symbols-outlined text-5xl text-primary mb-4 drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]">security</span>
+                <h1 class="font-section-header text-3xl text-outline tracking-[0.2em] uppercase">CodeSentry AI</h1>
+                <p class="font-label-sm text-outline/80 tracking-widest mt-2 uppercase">
+                    @(isSignUpMode ? "Register New Agent" : "Secure Analysis Uplink")
+                </p>
+            </div>
+
+            @* ── Server-side error banner ── *@
+            @if (!string.IsNullOrEmpty(serverError))
+            {
+                <div class="error-banner flex items-center mb-6 p-4 bg-error/10 border border-error/30 rounded text-error">
+                    <span class="material-symbols-outlined text-sm mr-2">error</span>
+                    <span class="font-data-sm leading-tight">@serverError</span>
+                </div>
+            }
+            @if (!string.IsNullOrEmpty(successMessage))
+            {
+                <div class="flex items-center mb-6 p-4 bg-tertiary/10 border border-tertiary/30 rounded text-tertiary">
+                    <span class="material-symbols-outlined text-sm mr-2">check_circle</span>
+                    <span class="font-data-sm leading-tight">@successMessage</span>
+                </div>
+            }
+
+            @* ── LOGIN FORM ── *@
+            @if (!isSignUpMode)
+            {
+                <EditForm Model="loginModel" OnValidSubmit="HandleLogin" class="space-y-6">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary class="text-error text-xs mb-4 list-none p-0" />
+
+                    <div class="auth-input-group">
+                        <label class="font-label-xs text-outline/80 mb-2 block uppercase tracking-widest text-[10px]">
+                            Credential: Agent Email
+                        </label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-primary/60 z-10">
+                                <span class="material-symbols-outlined text-sm">alternate_email</span>
+                            </span>
+                            <InputText @bind-Value="loginModel.Email"
+                                       class="auth-field w-full bg-[#0B0E15] border border-outline-variant/30 focus:border-primary focus:ring-1 focus:ring-primary/20 font-data-md text-white py-3 pl-10 pr-4 placeholder-outline/30 transition-all outline-none rounded shadow-inner"
+                                       placeholder="AGENT@CODESENTRY.AI"
+                                       type="email" />
+                        </div>
+                        <ValidationMessage For="@(() => loginModel.Email)"
+                                           class="text-error text-xs mt-1 font-data-sm block" />
+                    </div>
+
+                    <div class="auth-input-group">
+                        <label class="font-label-xs text-outline/80 mb-2 block uppercase tracking-widest text-[10px]">
+                            Credential: Access Key
+                        </label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-primary/60 z-10">
+                                <span class="material-symbols-outlined text-sm">lock</span>
+                            </span>
+                            <InputText @bind-Value="loginModel.Password"
+                                       class="auth-field w-full bg-[#0B0E15] border border-outline-variant/30 focus:border-primary focus:ring-1 focus:ring-primary/20 font-data-md text-white py-3 pl-10 pr-10 placeholder-outline/30 transition-all outline-none rounded shadow-inner"
+                                       placeholder="••••••••••••"
+                                       type="@(showPassword ? "text" : "password")" />
+                            <button type="button" @onclick="() => showPassword = !showPassword"
+                                    class="absolute right-3 top-1/2 -translate-y-1/2 text-outline-variant hover:text-primary transition-colors focus:outline-none z-10">
+                                <span class="material-symbols-outlined text-sm">@(showPassword ? "visibility_off" : "visibility")</span>
+                            </button>
+                        </div>
+                        <ValidationMessage For="@(() => loginModel.Password)"
+                                           class="text-error text-xs mt-1 font-data-sm block" />
+                    </div>
+
+                    <button type="submit" disabled="@isLoading"
+                            class="w-full bg-primary text-[#080A0E] font-bold py-4 rounded-DEFAULT uppercase tracking-[0.2em] hover:bg-white transition-all shadow-[0_0_20px_rgba(173,198,255,0.3)] hover:shadow-[0_0_30px_rgba(173,198,255,0.6)] relative overflow-hidden group disabled:opacity-50 mt-4">
+                        <div class="absolute inset-0 w-12 bg-white/20 skew-x-[45deg] -translate-x-full group-hover:animate-[shimmer_2s_infinite]"></div>
+                        <span class="relative z-10 flex items-center justify-center">
+                            @if (isLoading)
+                            {
+                                <span class="material-symbols-outlined mr-2 animate-spin">sync</span>
+                                <span>VERIFYING...</span>
+                            }
+                            else
+                            {
+                                <span class="material-symbols-outlined mr-2">login</span>
+                                <span>ESTABLISH UPLINK</span>
+                            }
+                        </span>
+                    </button>
+                </EditForm>
+            }
+
+            @* ── REGISTER FORM ── *@
+            @if (isSignUpMode)
+            {
+                <EditForm Model="registerModel" OnValidSubmit="HandleSignUp" class="space-y-6">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary class="text-error text-xs font-data-sm p-3 bg-error/10 border border-error/30 rounded mb-2 list-none p-0" />
+
+                    <div class="auth-input-group">
+                        <label class="font-label-xs text-outline/80 mb-2 block uppercase tracking-widest text-[10px]">
+                            Credential: Agent Alias
+                        </label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-primary/60 z-10">
+                                <span class="material-symbols-outlined text-sm">badge</span>
+                            </span>
+                            <InputText @bind-Value="registerModel.DisplayName"
+                                       class="auth-field w-full bg-[#0B0E15] border border-outline-variant/30 focus:border-primary font-data-md text-white py-3 pl-10 pr-4 placeholder-outline/30 transition-all outline-none rounded shadow-inner"
+                                       placeholder="AGENT ALIAS" type="text" />
+                        </div>
+                        <ValidationMessage For="@(() => registerModel.DisplayName)"
+                                           class="text-error text-xs mt-1 font-data-sm block" />
+                    </div>
+
+                    <div class="auth-input-group">
+                        <label class="font-label-xs text-outline/80 mb-2 block uppercase tracking-widest text-[10px]">
+                            Credential: Agent Email
+                        </label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-primary/60 z-10">
+                                <span class="material-symbols-outlined text-sm">alternate_email</span>
+                            </span>
+                            <InputText @bind-Value="registerModel.Email"
+                                       class="auth-field w-full bg-[#0B0E15] border border-outline-variant/30 focus:border-primary font-data-md text-white py-3 pl-10 pr-4 placeholder-outline/30 transition-all outline-none rounded shadow-inner"
+                                       placeholder="AGENT@CODESENTRY.AI" type="email" />
+                        </div>
+                        <ValidationMessage For="@(() => registerModel.Email)"
+                                           class="text-error text-xs mt-1 font-data-sm block" />
+                    </div>
+
+                    <div class="auth-input-group">
+                        <label class="font-label-xs text-outline/80 mb-2 block uppercase tracking-widest text-[10px]">
+                            Credential: Access Key
+                        </label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-primary/60 z-10">
+                                <span class="material-symbols-outlined text-sm">lock</span>
+                            </span>
+                            <InputText @bind-Value="registerModel.Password"
+                                       class="auth-field w-full bg-[#0B0E15] border border-outline-variant/30 focus:border-primary font-data-md text-white py-3 pl-10 pr-10 placeholder-outline/30 transition-all outline-none rounded shadow-inner"
+                                       placeholder="••••••••••••"
+                                       type="@(showPassword ? "text" : "password")" />
+                            <button type="button" @onclick="() => showPassword = !showPassword"
+                                    class="absolute right-3 top-1/2 -translate-y-1/2 text-outline-variant hover:text-primary transition-colors focus:outline-none z-10">
+                                <span class="material-symbols-outlined text-sm">@(showPassword ? "visibility_off" : "visibility")</span>
+                            </button>
+                        </div>
+                        <ValidationMessage For="@(() => registerModel.Password)"
+                                           class="text-error text-xs mt-1 font-data-sm block" />
+                    </div>
+
+                    <div class="auth-input-group">
+                        <label class="font-label-xs text-outline/80 mb-2 block uppercase tracking-widest text-[10px]">
+                            Confirm Access Key
+                        </label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-primary/60 z-10">
+                                <span class="material-symbols-outlined text-sm">lock_reset</span>
+                            </span>
+                            <InputText @bind-Value="registerModel.ConfirmPassword"
+                                       class="auth-field w-full bg-[#0B0E15] border border-outline-variant/30 focus:border-primary font-data-md text-white py-3 pl-10 pr-4 placeholder-outline/30 transition-all outline-none rounded shadow-inner"
+                                       placeholder="••••••••••••"
+                                       type="@(showPassword ? "text" : "password")" />
+                        </div>
+                        <ValidationMessage For="@(() => registerModel.ConfirmPassword)"
+                                           class="text-error text-xs mt-1 font-data-sm block" />
+                    </div>
+
+                    <button type="submit" disabled="@isLoading"
+                            class="w-full bg-primary text-[#080A0E] font-bold py-4 rounded-DEFAULT uppercase tracking-[0.2em] hover:bg-white transition-all shadow-[0_0_20px_rgba(173,198,255,0.3)] relative overflow-hidden group disabled:opacity-50 mt-4">
+                        <span class="relative z-10 flex items-center justify-center">
+                            @if (isLoading)
+                            {
+                                <span class="material-symbols-outlined mr-2 animate-spin">sync</span>
+                                <span>PROVISIONING...</span>
+                            }
+                            else
+                            {
+                                <span class="material-symbols-outlined mr-2">person_add</span>
+                                <span>REGISTER AGENT</span>
+                            }
+                        </span>
+                    </button>
+                </EditForm>
+            }
+
+            <div class="flex flex-col gap-3 mt-6">
+                <button @onclick="ToggleAuthMode" disabled="@isLoading"
+                        class="text-[10px] font-label-sm uppercase tracking-[0.1em] text-outline hover:text-primary transition-colors text-center">
+                    @(isSignUpMode ? "Already have credentials? Log In" : "Request New Agent Credentials")
+                </button>
+                <div class="h-px bg-outline/20 w-full"></div>
+                <p class="text-[9px] text-outline/60 text-center uppercase tracking-widest leading-relaxed">
+                    Authorized Personnel Only. All access attempts are logged and monitored by the CodeSentry Security Engine.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    @* === RIGHT: Visual Panel === *@
+    <div class="login-visual-panel">
+        <div class="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent"></div>
+        <div class="corner-brackets absolute inset-0 pointer-events-none">
+            <div class="bracket top-left"></div>
+            <div class="bracket top-right"></div>
+            <div class="bracket bottom-left"></div>
+            <div class="bracket bottom-right"></div>
+        </div>
+        <div class="network-nodes absolute inset-0 pointer-events-none">
+            <div class="node node-1" style="top: 20%; left: 30%;"></div>
+            <div class="node node-2" style="top: 70%; left: 25%;"></div>
+            <div class="node node-3" style="top: 30%; left: 75%;"></div>
+            <div class="node node-4" style="top: 65%; left: 80%;"></div>
+            <div class="node node-5" style="top: 15%; left: 60%;"></div>
+            <svg class="absolute inset-0 w-full h-full opacity-20">
+                <line class="pulse-line" x1="30%" y1="20%" x2="60%" y2="15%" />
+                <line class="pulse-line" x1="60%" y1="15%" x2="75%" y2="30%" />
+                <line class="pulse-line" x1="75%" y1="30%" x2="80%" y2="65%" />
+                <line class="pulse-line" x1="30%" y1="20%" x2="25%" y2="70%" />
+            </svg>
+        </div>
+        <div class="relative z-10 h-full flex flex-col items-center justify-center p-12 text-center">
+            <div class="radar-circle-container mb-8 relative">
+                <div class="pulse-wave wave-1"></div>
+                <div class="pulse-wave wave-2"></div>
+                <div class="pulse-wave wave-3"></div>
+                <div class="outer-glow-ring absolute rounded-full border border-teal/20 w-80 h-80 animate-spin-slow-reverse"></div>
+                <div class="circle-outer border-2 border-primary/40 rounded-full w-64 h-64 animate-spin-slow flex items-center justify-center relative">
+                    <div class="circle-inner border-2 border-tertiary/40 rounded-full w-48 h-48 animate-spin-reverse flex items-center justify-center">
+                        <span class="material-symbols-outlined text-7xl text-primary opacity-80 drop-shadow-[0_0_15px_rgba(59,130,246,0.6)]">hub</span>
+                    </div>
+                </div>
+            </div>
+            <div class="space-y-4 max-w-sm">
+                <h3 class="font-section-header text-xl text-outline tracking-widest uppercase">Global Analysis Engine</h3>
+                <p class="text-sm text-outline-variant leading-relaxed uppercase tracking-tighter">
+                    Real-time vulnerability intelligence across 14,000+ monitored repositories. Establish secure connection to begin analysis.
+                </p>
+            </div>
+            <div class="mt-12 flex gap-8">
+                <div class="stat text-center">
+                    <div class="text-primary font-data-md text-xl">99.9%</div>
+                    <div class="text-[8px] text-outline-variant uppercase tracking-widest">Uptime</div>
+                </div>
+                <div class="stat text-center border-x border-outline-variant/20 px-8">
+                    <div class="text-primary font-data-md text-xl">0.4s</div>
+                    <div class="text-[8px] text-outline-variant uppercase tracking-widest">Latency</div>
+                </div>
+                <div class="stat text-center">
+                    <div class="text-primary font-data-md text-xl">Encrypted</div>
+                    <div class="text-[8px] text-outline-variant uppercase tracking-widest">TLS 1.3</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .login-split { display: flex; min-height: 100vh; width: 100%; background: #080A0E; overflow: hidden; }
+    .login-form-panel { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px; background: #0F1117; border-right: 1px solid rgba(59,130,246,0.1); position: relative; z-index: 20; }
+    .login-visual-panel { flex: 1; position: relative; background: radial-gradient(circle at center, #131722 0%, #080A0E 100%); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .glass-panel { background: rgba(15,17,23,0.7); backdrop-filter: blur(20px); width: 100%; max-width: 440px; }
+    .bracket { position: absolute; width: 30px; height: 30px; border: 2px solid rgba(59,130,246,0.4); animation: bracketPulse 4s ease-in-out infinite; }
+    .top-left { top: 40px; left: 40px; border-right: none; border-bottom: none; }
+    .top-right { top: 40px; right: 40px; border-left: none; border-bottom: none; }
+    .bottom-left { bottom: 40px; left: 40px; border-right: none; border-top: none; }
+    .bottom-right { bottom: 40px; right: 40px; border-left: none; border-top: none; }
+    @@keyframes bracketPulse { 0%,100%{opacity:0.3;box-shadow:0 0 5px rgba(59,130,246,0.2);}50%{opacity:1;box-shadow:0 0 15px rgba(59,130,246,0.5);} }
+    .node { position: absolute; width: 6px; height: 6px; background: #10B981; border-radius: 50%; box-shadow: 0 0 10px rgba(16,185,129,0.5); animation: nodePulse 3s infinite; }
+    .pulse-line { stroke: rgba(16,185,129,0.2); stroke-width: 1; stroke-dasharray: 5; animation: dash 10s linear infinite; }
+    @@keyframes nodePulse { 0%,100%{transform:scale(1);opacity:0.5;}50%{transform:scale(1.5);opacity:1;} }
+    @@keyframes dash { to{stroke-dashoffset:-50;} }
+    .animate-spin-slow-reverse { animation: spin-reverse 20s linear infinite; }
+    .pulse-wave { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); border: 1px solid rgba(59,130,246,0.3); border-radius: 50%; animation: sonar 4s cubic-bezier(0,0.2,0.8,1) infinite; }
+    .wave-1{animation-delay:0s;} .wave-2{animation-delay:1.3s;} .wave-3{animation-delay:2.6s;}
+    @@keyframes sonar { 0%{width:0;height:0;opacity:1;} 100%{width:500px;height:500px;opacity:0;} }
+    .radar-circle-container { position: relative; display: flex; align-items: center; justify-content: center; }
+    .circle-outer { border: 2px solid rgba(59,130,246,0.2); box-shadow: 0 0 40px rgba(59,130,246,0.1); z-index: 5; }
+    .circle-inner { border: 2px solid rgba(0,229,255,0.2); box-shadow: 0 0 30px rgba(0,229,255,0.1); }
+    .animate-spin-slow { animation: spin 12s linear infinite; }
+    .animate-spin-reverse { animation: spin-reverse 8s linear infinite; }
+    @@keyframes spin { from{transform:rotate(0deg);}to{transform:rotate(360deg);} }
+    @@keyframes spin-reverse { from{transform:rotate(360deg);}to{transform:rotate(0deg);} }
+    .auth-field { background-color: #0B0E15 !important; color: #FFFFFF !important; }
+    .auth-field::placeholder { color: rgba(255,255,255,0.3) !important; }
+    input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus, input:-webkit-autofill:active {
+        -webkit-box-shadow: 0 0 0 1000px #0B0E15 inset !important;
+        -webkit-text-fill-color: #FFFFFF !important;
+        caret-color: #FFFFFF !important;
+    }
+    @@media (max-width:1024px) { .login-visual-panel{display:none;} .login-form-panel{flex:1;} }
+    /* Blazor validation message styling */
+    .validation-message { color: #EF4444; font-size: 0.75rem; margin-top: 0.25rem; display: block; }
+</style>
+
+@code {
+    private LoginFormModel    loginModel    = new() { Email = "admin@codesentry.ai", Password = "CodeSentryAdmin2026!" };
+    private RegisterFormModel registerModel = new() { DisplayName = "Admin Agent", Email = "admin@codesentry.ai", Password = "CodeSentryAdmin2026!", ConfirmPassword = "CodeSentryAdmin2026!" };
+
+    private string serverError    = "";
+    private string successMessage = "";
+    private bool   isLoading      = false;
+    private bool   isSignUpMode   = false;
+    private bool   showPassword   = false;
+
+    [Parameter]
+    [SupplyParameterFromQuery]
+    public string? returnUrl { get; set; }
+
+    private static string GetSafeReturnUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return "/dashboard";
+        var trimmed = url.Trim();
+        if (!trimmed.StartsWith("/") || trimmed.StartsWith("//")) return "/dashboard";
+        var firstSlash = trimmed.IndexOf('/', 1);
+        var colonPos   = trimmed.IndexOf(':');
+        if (colonPos >= 0 && (firstSlash < 0 || colonPos < firstSlash)) return "/dashboard";
+        if (trimmed.Any(char.IsControl)) return "/dashboard";
+        return trimmed;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated ?? false)
+            Nav.NavigateTo(GetSafeReturnUrl(returnUrl));
+    }
+
+    private void ToggleAuthMode()
+    {
+        isSignUpMode   = !isSignUpMode;
+        serverError    = "";
+        successMessage = "";
+        loginModel     = new();
+        registerModel  = new();
+    }
+
+    private async Task HandleLogin()
+    {
+        isLoading   = true;
+        serverError = "";
+        try
+        {
+            var session = await Supabase.Auth.SignIn(loginModel.Email, loginModel.Password);
+            if (session != null)
+            {
+                try
+                {
+                    var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+                    await client.PostAsync("api/auth/sync", null);
+                }
+                catch { /* Sync fail should not block login */ }
+                Nav.NavigateTo(GetSafeReturnUrl(returnUrl));
+            }
+        }
+        catch (Exception ex)
+        {
+            var msg = ex.Message;
+            if (msg.Contains("invalid_credentials", StringComparison.OrdinalIgnoreCase) || msg.Contains("Invalid login credentials", StringComparison.OrdinalIgnoreCase))
+            {
+                serverError = "Uplink denied: Credentials not found. If this is a new evaluation, please click 'Request New Agent Credentials' below.";
+            }
+            else
+            {
+                serverError = "Uplink denied: " + msg.Split('\n')[0];
+            }
+        }
+        finally { isLoading = false; }
+    }
+
+    private async Task HandleSignUp()
+    {
+        isLoading      = true;
+        serverError    = "";
+        successMessage = "";
+        try
+        {
+            var options = new Supabase.Gotrue.SignUpOptions
+            {
+                Data = new Dictionary<string, object> { { "display_name", registerModel.DisplayName } }
+            };
+            var session = await Supabase.Auth.SignUp(registerModel.Email, registerModel.Password, options);
+            if (session != null)
+            {
+                successMessage = session.User?.EmailConfirmedAt == null
+                    ? "Registration successful. Check your email to confirm your account."
+                    : "Registration successful. You can now log in.";
+                isSignUpMode  = false;
+                registerModel = new();
+            }
+        }
+        catch (Exception ex)
+        {
+            serverError = "Registration failed: " + ex.Message.Split('\n')[0];
+        }
+        finally { isLoading = false; }
+    }
+}

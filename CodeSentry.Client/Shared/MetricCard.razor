@@ -1,0 +1,47 @@
+@* ============================================================
+   MetricCard.razor — Reusable glassmorphism stat card
+   Parameters:
+     Title    — card label (uppercase)
+     Value    — main display value (string)
+     Icon     — Material Symbols icon name
+     Color    — hex color string e.g. "#10B981"
+     Subtitle — small secondary text (optional)
+     IsLoading — shows a shimmer placeholder
+   ============================================================ *@
+
+<div class="metric-card glass-panel level-1-border rounded relative overflow-hidden flex flex-col justify-between p-5 bg-[#0F1117]"
+     style="box-shadow: inset 20px 20px 60px -30px @(Color)20; border-left: 2px solid @Color;">
+    <div class="absolute right-0 top-0 h-full w-1/2 pointer-events-none"
+         style="background: linear-gradient(to left, @(Color)08, transparent);">
+    </div>
+
+    <div class="flex items-center justify-between mb-3">
+        <h3 class="font-label-md text-outline uppercase tracking-wide text-xs">@Title</h3>
+        <span class="material-symbols-outlined text-lg opacity-60" style="color: @Color;">@Icon</span>
+    </div>
+
+    @if (IsLoading)
+    {
+        <div class="h-8 w-24 bg-outline-variant/20 rounded animate-pulse mb-1"></div>
+        <div class="h-3 w-16 bg-outline-variant/10 rounded animate-pulse"></div>
+    }
+    else
+    {
+        <div class="flex items-end justify-between">
+            <span class="font-data-lg text-white text-3xl font-bold" style="color: @Color;">@Value</span>
+            @if (!string.IsNullOrEmpty(Subtitle))
+            {
+                <span class="font-data-sm text-outline text-xs flex items-center gap-1">@Subtitle</span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title    { get; set; } = "";
+    [Parameter, EditorRequired] public string Value    { get; set; } = "0";
+    [Parameter]                 public string Icon     { get; set; } = "analytics";
+    [Parameter]                 public string Color    { get; set; } = "#3B82F6";
+    [Parameter]                 public string Subtitle { get; set; } = "";
+    [Parameter]                 public bool   IsLoading{ get; set; } = false;
+}

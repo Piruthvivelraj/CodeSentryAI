@@ -1,0 +1,29 @@
+@page "/not-found"
+@page "/404"
+@layout MainLayout
+
+<PageTitle>CodeSentry AI — 404</PageTitle>
+
+<main class="ml-[64px] mt-12 p-margin min-h-screen page-enter flex flex-col items-center justify-center page-wrapper">
+    <div class="text-center flex flex-col items-center gap-6 max-w-lg">
+        <div class="relative">
+            <span class="material-symbols-outlined text-[#EF4444] text-8xl animate-pulse" style="filter: drop-shadow(0 0 20px rgba(239,68,68,0.8));">error</span>
+        </div>
+        <div class="flex flex-col gap-2">
+            <div class="font-section-header text-[#EF4444] text-sm tracking-[0.3em] uppercase">SYSTEM ERROR</div>
+            <h1 class="font-data-lg text-7xl font-extrabold text-white tracking-tight" style="text-shadow: 0 0 30px rgba(239,68,68,0.5);">404</h1>
+            <div class="font-section-header text-outline text-xs tracking-[0.2em] uppercase">NODE NOT FOUND</div>
+        </div>
+        <p class="font-body-md text-outline text-lg leading-relaxed">
+            The requested resource does not exist in the system registry. It may have been deleted, moved, or never existed.
+        </p>
+        <div class="flex items-center gap-3 font-data-sm text-outline">
+            <span class="material-symbols-outlined text-sm">info</span>
+            <span>Scan ID: <span class="text-primary">UNKNOWN</span> | Status: <span class="text-error">NOT FOUND</span></span>
+        </div>
+        <a href="/" class="bg-accent text-white font-label-md px-8 py-4 rounded flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(59,130,246,0.4)] hover:bg-[#2563EB] transition-all btn-primary mt-4 no-underline">
+            <span class="material-symbols-outlined">home</span>
+            RETURN TO BASE
+        </a>
+    </div>
+</main>

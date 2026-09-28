@@ -1,0 +1,62 @@
+@* ============================================================
+   SearchBar.razor — Reusable debounced search input
+   Parameters:
+     Placeholder  — input placeholder text
+     Value        — two-way bindable search string
+     ValueChanged — callback when value changes
+     OnClear      — optional clear callback
+   ============================================================ *@
+
+<div class="relative flex items-center">
+    <span class="absolute left-3 text-outline pointer-events-none">
+        <span class="material-symbols-outlined text-sm">search</span>
+    </span>
+    <input type="text"
+           value="@Value"
+           @oninput="HandleInput"
+           placeholder="@Placeholder"
+           class="w-full bg-surface-container border border-outline-variant/40 focus:border-primary focus:ring-1 focus:ring-primary/20 text-on-surface placeholder-outline/50 py-2 pl-9 pr-8 rounded-DEFAULT font-data-sm text-sm outline-none transition-all" />
+    @if (!string.IsNullOrEmpty(Value))
+    {
+        <button @onclick="ClearSearch"
+                class="absolute right-3 text-outline hover:text-on-surface transition-colors focus:outline-none">
+            <span class="material-symbols-outlined text-sm">close</span>
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter] public string         Value        { get; set; } = "";
+    [Parameter] public string         Placeholder  { get; set; } = "Search...";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public EventCallback  OnClear      { get; set; }
+
+    private System.Timers.Timer? _debounceTimer;
+
+    private void HandleInput(ChangeEventArgs e)
+    {
+        _debounceTimer?.Stop();
+        _debounceTimer?.Dispose();
+        _debounceTimer = new System.Timers.Timer(300);
+        _debounceTimer.Elapsed += async (_, _) =>
+        {
+            _debounceTimer?.Dispose();
+            _debounceTimer = null;
+            var newVal = e.Value?.ToString() ?? "";
+            await InvokeAsync(async () =>
+            {
+                await ValueChanged.InvokeAsync(newVal);
+            });
+        };
+        _debounceTimer.AutoReset = false;
+        _debounceTimer.Start();
+    }
+
+    private async Task ClearSearch()
+    {
+        await ValueChanged.InvokeAsync("");
+        await OnClear.InvokeAsync();
+    }
+
+    public void Dispose() => _debounceTimer?.Dispose();
+}

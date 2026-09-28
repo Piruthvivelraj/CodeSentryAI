@@ -1,0 +1,368 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Nav
+@inject IHttpClientFactory HttpClientFactory
+@inject Supabase.Client Supabase
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
+@using CodeSentryAI.Pages
+
+<PageTitle>CodeSentry AI — @currentPageTitle</PageTitle>
+
+<div class="text-on-background min-h-screen flex w-full">
+    <!-- Mobile Sidebar Overlay (Issue 12) -->
+    @if (isMobileSidebarOpen)
+    {
+        <div class="fixed inset-0 bg-black/60 z-[55] md:hidden" @onclick="CloseMobileSidebar"></div>
+    }
+
+    <!-- SideNavBar — hidden on mobile, overlay when toggled -->
+    <nav class="@SidebarCssClass">
+    <div class="font-data-lg text-data-lg text-primary drop-shadow-[0_0_8px_rgba(173,198,255,0.8)] mt-4">
+    <a href="/"><span class="material-symbols-outlined text-3xl hex-clip bg-primary/20 p-2 border border-primary">hexagon</span></a>
+    </div>
+    <div class="flex-1 flex flex-col w-full space-y-4 items-center mt-8">
+    <a class="sidebar-icon w-full flex justify-center py-3 transition-all duration-200 active:scale-95 @(IsActive("/dashboard") ? "text-primary border-l-2 border-primary bg-primary/10 shadow-[inset_8px_0_12px_-8px_rgba(173,198,255,0.6)]" : "text-outline hover:text-primary-fixed-dim hover:bg-surface-container-highest/50")" href="/dashboard" title="Dashboard" @onclick="CloseMobileSidebar">
+    <span class="material-symbols-outlined text-2xl">dashboard</span>
+    </a>
+    <a class="sidebar-icon w-full flex justify-center py-3 transition-all duration-200 active:scale-95 @(IsActive("/scan") ? "text-primary border-l-2 border-primary bg-primary/10 shadow-[inset_8px_0_12px_-8px_rgba(173,198,255,0.6)]" : "text-outline hover:text-primary-fixed-dim hover:bg-surface-container-highest/50")" href="/scan" title="Scanner" @onclick="CloseMobileSidebar">
+    <span class="material-symbols-outlined text-2xl">query_stats</span>
+    </a>
+    <a class="sidebar-icon w-full flex justify-center py-3 transition-all duration-200 active:scale-95 @(IsActive("/reports") ? "text-primary border-l-2 border-primary bg-primary/10 shadow-[inset_8px_0_12px_-8px_rgba(173,198,255,0.6)]" : "text-outline hover:text-primary-fixed-dim hover:bg-surface-container-highest/50")" href="/reports" title="Reports" @onclick="CloseMobileSidebar">
+    <span class="material-symbols-outlined text-2xl">analytics</span>
+    </a>
+    <a class="sidebar-icon w-full flex justify-center py-3 transition-all duration-200 active:scale-95 @(IsActive("/compare") ? "text-primary border-l-2 border-primary bg-primary/10 shadow-[inset_8px_0_12px_-8px_rgba(173,198,255,0.6)]" : "text-outline hover:text-primary-fixed-dim hover:bg-surface-container-highest/50")" href="/compare" title="Compare Scans" @onclick="CloseMobileSidebar">
+    <span class="material-symbols-outlined text-2xl">compare_arrows</span>
+    </a>
+    @if (isAdmin)
+    {
+        <a class="sidebar-icon w-full flex justify-center py-3 transition-all duration-200 active:scale-95 @(IsActive("/admin") ? "text-[#8B5CF6] border-l-2 border-[#8B5CF6] bg-[#8B5CF6]/10 shadow-[inset_8px_0_12px_-8px_rgba(139,92,246,0.6)]" : "text-outline hover:text-[#8B5CF6] hover:bg-surface-container-highest/50")" href="/admin" title="Admin Dashboard" @onclick="CloseMobileSidebar">
+        <span class="material-symbols-outlined text-2xl">admin_panel_settings</span>
+        </a>
+    }
+    </div>
+    <div class="w-full flex justify-center pb-8 flex-col items-center gap-4">
+    <a class="sidebar-icon w-full flex justify-center py-3 text-outline hover:text-primary-fixed-dim hover:bg-surface-container-highest/50 transition-all duration-200 active:scale-95" href="/settings" title="Settings" @onclick="CloseMobileSidebar">
+    <span class="material-symbols-outlined text-2xl">settings</span>
+    </a>
+    <button @onclick="HandleLogout" class="sidebar-icon w-full flex justify-center py-3 text-error hover:bg-error/10 transition-all duration-200 active:scale-95 border-0 bg-transparent" title="Logout">
+    <span class="material-symbols-outlined text-2xl">logout</span>
+    </button>
+    </div>
+    </nav>
+
+    <!-- TopAppBar — Issue 12: no fixed left offset on mobile -->
+    <header class="fixed top-0 right-0 left-0 md:left-[64px] h-12 z-40 bg-surface-dim/60 backdrop-blur-lg border-b border-outline-variant/20 flex items-center justify-between px-margin w-full">
+    <div class="flex items-center space-x-6">
+    <!-- Hamburger button visible below md breakpoint -->
+    <button @onclick="ToggleMobileSidebar" class="md:hidden text-primary hover:text-primary-fixed transition-colors p-1 -ml-1">
+        <span class="material-symbols-outlined text-2xl">menu</span>
+    </button>
+    <a href="/dashboard" class="font-section-header text-section-header font-black text-primary uppercase tracking-[0.2em] no-underline">CODESENTRY AI</a>
+    <span class="hidden md:inline font-data-sm text-outline">/ @currentPageTitle</span>
+    <nav class="hidden md:flex space-x-6 h-full items-center ml-4">
+    <a class="nav-link text-outline font-medium hover:text-primary-fixed transition-colors h-full flex items-center px-2 cursor-pointer font-data-md text-data-md tracking-tight" href="/dashboard">Dashboard</a>
+    <a class="nav-link text-outline font-medium hover:text-primary-fixed transition-colors h-full flex items-center px-2 cursor-pointer font-data-md text-data-md tracking-tight" href="/scan">Scanner</a>
+    <a class="nav-link text-outline font-medium hover:text-primary-fixed transition-colors h-full flex items-center px-2 cursor-pointer font-data-md text-data-md tracking-tight" href="/reports">Reports</a>
+    <a class="nav-link text-outline font-medium hover:text-primary-fixed transition-colors h-full flex items-center px-2 cursor-pointer font-data-md text-data-md tracking-tight" href="/compare">Compare</a>
+    </nav>
+    </div>
+    <div class="flex items-center space-x-4 relative">
+    <div class="relative" @ref="notifDropdownRef">
+        <div class="relative inline-block cursor-pointer" @onclick="ToggleNotifications">
+            <span class="material-symbols-outlined text-primary hover:text-primary-fixed transition-colors mt-1">notifications_active</span>
+            @if (unreadCount > 0)
+            {
+                <span class="absolute -top-1 -right-1 bg-error text-white text-[9px] font-bold px-1 rounded-full border border-surface-dim">@unreadCount</span>
+            }
+        </div>
+        @if (showNotifications)
+        {
+        <div class="notif-dropdown absolute right-0 mt-3 w-80 bg-surface-container-high border border-outline-variant/30 rounded-DEFAULT shadow-2xl z-50 flex flex-col max-h-96">
+            <div class="p-3 border-b border-outline-variant/20 flex justify-between items-center bg-surface-container/50">
+                <span class="font-section-header text-outline tracking-widest uppercase text-xs">Notifications</span>
+                @if (unreadCount > 0)
+                {
+                    <button @onclick="MarkAllAsRead" class="text-primary hover:text-primary-fixed text-xs tracking-wider uppercase font-data-sm">Mark Read</button>
+                }
+            </div>
+            <div class="overflow-y-auto flex-1">
+                @if (mappedNotifications != null && mappedNotifications.Count > 0)
+                {
+                    @foreach (var n in mappedNotifications)
+                    {
+                    <a href="/reports?scanId=@n.ScanId" class="flex items-start gap-3 p-3 hover:bg-primary/5 transition-colors border-b border-outline-variant/10 no-underline @(n.IsUnread ? "bg-primary/5" : "")">
+                        <span class="material-symbols-outlined text-tertiary mt-1 text-sm @(n.Icon == "warning" ? "text-error" : "")">@n.Icon</span>
+                        <div class="flex-1 min-w-0">
+                            <div class="font-data-sm text-on-surface text-sm leading-tight">@n.Message</div>
+                            <div class="font-label-sm text-outline text-[10px] mt-1">@n.TimeAgo</div>
+                        </div>
+                    </a>
+                    }
+                }
+                else
+                {
+                    <div class="p-4 text-outline text-center font-body-md text-sm">No notifications</div>
+                }
+            </div>
+        </div>
+        }
+    </div>
+    <span class="material-symbols-outlined text-primary cursor-pointer hover:text-primary-fixed transition-colors">account_tree</span>
+    
+    <AuthorizeView>
+        <Authorized>
+            <div class="flex items-center gap-3 ml-4">
+                <div class="flex items-center gap-2">
+                    <span class="hidden lg:inline text-[10px] font-data-sm text-outline uppercase tracking-widest">@(string.IsNullOrEmpty(displayName) ? context.User.Identity?.Name : displayName)</span>
+                    <div class="w-8 h-8 rounded-full bg-primary/20 border border-primary/50 flex items-center justify-center overflow-hidden" title="@(string.IsNullOrEmpty(displayName) ? context.User.Identity?.Name : displayName)">
+                        <span class="text-primary font-bold text-xs">@(string.IsNullOrEmpty(displayName) 
+                            ? (context.User.Identity?.Name?.Substring(0, 1).ToUpper() ?? "U") 
+                            : displayName.Substring(0, 1).ToUpper())</span>
+                    </div>
+                </div>
+                <!-- Premium Header Logout Button -->
+                <button @onclick="HandleLogout" class="flex items-center gap-1.5 px-3 py-1.5 bg-error/10 hover:bg-error/20 text-error border border-error/20 rounded font-label-sm text-[10px] uppercase tracking-widest transition-all cursor-pointer" title="Log Out">
+                    <span class="material-symbols-outlined text-xs">logout</span>
+                    <span class="hidden md:inline">Log Out</span>
+                </button>
+            </div>
+        </Authorized>
+        <NotAuthorized>
+            <div class="w-8 h-8 rounded-full bg-surface-container-highest border border-outline-variant flex items-center justify-center ml-4">
+                <span class="material-symbols-outlined text-sm text-outline">person</span>
+            </div>
+        </NotAuthorized>
+    </AuthorizeView>
+    </div>
+    </header>
+
+    @Body
+</div>
+
+@code {
+    private string currentPath = "";
+    private string currentPageTitle = "Dashboard";
+    private bool showNotifications = false;
+    private bool isMobileSidebarOpen = false;
+    private ElementReference notifDropdownRef;
+    private bool isAdmin = false;
+    private string displayName = "";
+
+    private int unreadCount = 0;
+    private DateTime lastReadTime = DateTime.MinValue;
+    private List<NotificationItem>? mappedNotifications;
+
+    /// <summary>
+    /// Issue 12: Sidebar CSS — hidden by default on mobile, shown as overlay drawer when toggled.
+    /// On desktop (md+), always visible as fixed sidebar.
+    /// </summary>
+    private string SidebarCssClass => isMobileSidebarOpen
+        ? "fixed left-0 top-0 h-full w-[64px] z-[60] bg-surface-container-lowest/95 backdrop-blur-xl border-r border-outline-variant/30 shadow-[4px_0_24px_rgba(0,0,0,0.5)] flex flex-col items-center py-margin space-y-8 transition-transform duration-300"
+        : "fixed left-0 top-0 h-full w-[64px] z-50 bg-surface-container-lowest/80 backdrop-blur-xl border-r border-outline-variant/30 shadow-[4px_0_24px_rgba(0,0,0,0.5)] flex-col items-center py-margin space-y-8 hidden md:flex";
+
+    protected override void OnInitialized()
+    {
+        currentPath = new Uri(Nav.Uri).AbsolutePath;
+        currentPageTitle = GetPageTitle(currentPath);
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await FetchNotifications();
+            await CheckAdminStatus();
+            StateHasChanged();
+        }
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        currentPath = new Uri(e.Location).AbsolutePath;
+        currentPageTitle = GetPageTitle(currentPath);
+        showNotifications = false;
+        isMobileSidebarOpen = false;
+        _ = CheckAdminStatus();
+        StateHasChanged();
+    }
+
+    private bool IsActive(string route)
+    {
+        return currentPath.StartsWith(route, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetPageTitle(string path)
+    {
+        if (path.StartsWith("/dashboard", StringComparison.OrdinalIgnoreCase)) return "Dashboard";
+        if (path.StartsWith("/scan",      StringComparison.OrdinalIgnoreCase)) return "Scanner";
+        if (path.StartsWith("/reports",   StringComparison.OrdinalIgnoreCase)) return "Reports";
+        if (path.StartsWith("/compare",   StringComparison.OrdinalIgnoreCase)) return "Compare Scans";
+        if (path.StartsWith("/settings",  StringComparison.OrdinalIgnoreCase)) return "Settings";
+        if (path.StartsWith("/admin",     StringComparison.OrdinalIgnoreCase)) return "Admin Dashboard";
+        if (path.StartsWith("/not-found", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/404", StringComparison.OrdinalIgnoreCase)) return "404";
+        return "Home";
+    }
+
+    private void ToggleMobileSidebar()
+    {
+        isMobileSidebarOpen = !isMobileSidebarOpen;
+    }
+
+    private void CloseMobileSidebar()
+    {
+        isMobileSidebarOpen = false;
+    }
+
+    private async Task ToggleNotifications()
+    {
+        showNotifications = !showNotifications;
+        if (showNotifications && mappedNotifications == null)
+        {
+            await FetchNotifications();
+        }
+    }
+
+    private async Task FetchNotifications()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var history = await client.GetFromJsonAsync<List<CodeSentryAI.Models.RecentScan>>("api/scan/history");
+            if (history != null)
+            {
+                var timeStr = await JS.InvokeAsync<string>("localStorage.getItem", "lastNotificationReadTime");
+                if (DateTime.TryParse(timeStr, out var lrTime))
+                {
+                    lastReadTime = lrTime.ToUniversalTime();
+                }
+
+                mappedNotifications = new List<NotificationItem>();
+                foreach (var scan in history.Take(5))
+                {
+                    var isUnread = scan.CreatedAt > lastReadTime;
+                    
+                    mappedNotifications.Add(new NotificationItem
+                    {
+                        ScanId = scan.Id,
+                        Message = $"Scan complete — {scan.RepositoryName} scored {scan.Score}",
+                        TimeAgo = "Recent",
+                        Icon = "check_circle",
+                        CreatedAt = scan.CreatedAt,
+                        IsUnread = isUnread
+                    });
+
+                    if (scan.Score < 80)
+                    {
+                        mappedNotifications.Add(new NotificationItem
+                        {
+                            ScanId = scan.Id,
+                            Message = $"New critical issue found in {scan.RepositoryName}",
+                            TimeAgo = "Recent",
+                            Icon = "warning",
+                            CreatedAt = scan.CreatedAt.AddMinutes(1),
+                            IsUnread = scan.CreatedAt.AddMinutes(1) > lastReadTime
+                        });
+                    }
+                }
+                
+                mappedNotifications.Add(new NotificationItem
+                {
+                    ScanId = "report",
+                    Message = "Monthly code health report ready",
+                    TimeAgo = "1 day ago",
+                    Icon = "insert_chart",
+                    CreatedAt = DateTime.UtcNow.AddDays(-1),
+                    IsUnread = DateTime.UtcNow.AddDays(-1) > lastReadTime
+                });
+                
+                mappedNotifications = mappedNotifications.OrderByDescending(x => x.CreatedAt).ToList();
+                unreadCount = mappedNotifications.Count(x => x.IsUnread);
+            }
+        }
+        catch { }
+    }
+
+    private async Task MarkAllAsRead()
+    {
+        lastReadTime = DateTime.UtcNow;
+        await JS.InvokeVoidAsync("localStorage.setItem", "lastNotificationReadTime", lastReadTime.ToString("o"));
+        if (mappedNotifications != null)
+        {
+            foreach (var n in mappedNotifications) n.IsUnread = false;
+        }
+        unreadCount = 0;
+    }
+
+    public class NotificationItem
+    {
+        public string ScanId { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string TimeAgo { get; set; } = "";
+        public string Icon { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
+        public bool IsUnread { get; set; }
+    }
+
+    private async Task CheckAdminStatus()
+    {
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+            if (user.Identity?.IsAuthenticated == true)
+            {
+                var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+                var planInfo = await client.GetFromJsonAsync<Settings.PlanInfoModel>("api/user/plan");
+                if (planInfo != null)
+                {
+                    var updated = false;
+                    if (planInfo.IsAdmin != isAdmin)
+                    {
+                        isAdmin = planInfo.IsAdmin;
+                        updated = true;
+                    }
+                    if (planInfo.DisplayName != displayName)
+                    {
+                        displayName = planInfo.DisplayName;
+                        updated = true;
+                    }
+                    if (updated)
+                    {
+                        StateHasChanged();
+                    }
+                }
+            }
+            else
+            {
+                if (isAdmin || !string.IsNullOrEmpty(displayName))
+                {
+                    isAdmin = false;
+                    displayName = "";
+                    StateHasChanged();
+                }
+            }
+        }
+        catch
+        {
+            if (isAdmin || !string.IsNullOrEmpty(displayName))
+            {
+                isAdmin = false;
+                displayName = "";
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task HandleLogout()
+    {
+        await Supabase.Auth.SignOut();
+        Nav.NavigateTo("/login");
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+}

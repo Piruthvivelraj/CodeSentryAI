@@ -1,0 +1,612 @@
+@page "/settings"
+@attribute [Authorize]
+@inject CodeSentryAI.Services.ToastService Toast
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Nav
+@inject Supabase.Client Supabase
+@inject IConfiguration Configuration
+@inject IJSRuntime JS
+
+<PageTitle>CodeSentry AI — Settings</PageTitle>
+
+<main class="lg:ml-[64px] mt-12 p-margin min-h-screen page-enter page-wrapper">
+    <div class="max-w-4xl mx-auto flex flex-col gap-8 pb-12">
+
+        <div class="bg-surface-container/60 backdrop-blur-md border border-outline-variant/30 rounded-DEFAULT p-8">
+            <h1 class="font-section-header text-section-header text-primary mb-8 tracking-widest uppercase flex items-center">
+                <span class="material-symbols-outlined mr-3">settings</span> Settings
+            </h1>
+
+            <section class="flex flex-col gap-10">
+                <!-- PROFILE SECTION -->
+                <div>
+                    <div class="flex justify-between items-center mb-4 border-b border-outline-variant/30 pb-2">
+                        <h2 class="font-label-md text-label-md text-on-surface uppercase tracking-widest">Profile</h2>
+                        @if (planType == "FREE")
+                        {
+                            <span class="px-3 py-1 rounded-full text-xs font-bold bg-surface-container-high text-outline border border-outline-variant/50">FREE PLAN</span>
+                        }
+                        else if (planType == "PRO")
+                        {
+                            <span class="px-3 py-1 rounded-full text-xs font-bold bg-[#3B82F6]/20 text-[#3B82F6] border border-[#3B82F6]/50">PRO PLAN</span>
+                        }
+                        else if (planType == "TEAM")
+                        {
+                            <span class="px-3 py-1 rounded-full text-xs font-bold bg-[#8B5CF6]/20 text-[#8B5CF6] border border-[#8B5CF6]/50">TEAM PLAN</span>
+                        }
+                    </div>
+
+                    <div class="flex flex-col gap-4 font-data-sm text-data-sm">
+                        <div class="flex flex-col gap-1">
+                            <span class="text-outline">Display Name</span>
+                            @if (isEditingName)
+                            {
+                                <EditForm Model="profileModel" OnValidSubmit="SaveDisplayName" class="flex flex-col gap-1">
+                                    <DataAnnotationsValidator />
+                                    <ValidationSummary class="text-error text-xs mb-2 list-none p-0" />
+                                    <div class="flex gap-2">
+                                        <InputText @bind-Value="profileModel.DisplayName" class="flex-1 bg-surface-container border border-outline-variant focus:border-primary p-2 rounded-DEFAULT text-on-surface" />
+                                        <button type="submit" class="bg-primary/20 text-primary px-4 rounded-DEFAULT hover:bg-primary/30">Save</button>
+                                        <button type="button" @onclick="CancelEditName" class="text-outline hover:text-on-surface px-4">Cancel</button>
+                                    </div>
+                                    <ValidationMessage For="@(() => profileModel.DisplayName)" class="text-error text-xs font-data-sm" />
+                                </EditForm>
+                            }
+                            else
+                            {
+                                <div class="flex justify-between items-center">
+                                    <span class="text-on-surface font-data-md text-lg">@(string.IsNullOrEmpty(displayName) ? "No Name Set" : displayName)</span>
+                                    <button @onclick="StartEditName" class="text-primary hover:text-primary-fixed flex items-center gap-1 text-xs uppercase tracking-wider">
+                                        <span class="material-symbols-outlined text-sm">edit</span> Edit
+                                    </button>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="flex justify-between items-center py-3 border-t border-outline-variant/10">
+                            <span class="text-outline">Agent Email</span>
+                            <span class="text-on-surface font-data-md">@userEmail</span>
+                        </div>
+                        
+                        <div class="flex justify-between items-center py-3 border-t border-outline-variant/10">
+                            <span class="text-outline">Account Session</span>
+                            <button @onclick="HandleLogout" class="px-4 py-2 border border-error text-error hover:bg-error/10 hover:border-error/50 transition-colors rounded-DEFAULT font-label-sm uppercase tracking-wider text-xs bg-transparent cursor-pointer">
+                                Log Out Session
+                            </button>
+                        </div>
+                        
+                        @if (planType == "FREE")
+                        {
+                            <div class="py-4 border-t border-outline-variant/10">
+                                <div class="flex justify-between mb-2">
+                                    <span class="text-outline">Monthly Scans</span>
+                                    <span class="text-on-surface">@scansThisMonth / @scanLimit used</span>
+                                </div>
+                                <div class="w-full bg-surface-container-high rounded-full h-2">
+                                    <div class="bg-primary h-2 rounded-full" style="width: @((scansThisMonth * 100.0) / Math.Max(1, scanLimit))%"></div>
+                                </div>
+                                <div class="mt-4 flex justify-end">
+                                    <a href="/pricing" class="px-4 py-2 bg-primary/10 border border-primary text-primary rounded-DEFAULT uppercase tracking-widest text-xs hover:bg-primary/20 transition-colors">Upgrade to Pro</a>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <!-- NOTIFICATIONS SECTION -->
+                <div>
+                    <h2 class="font-label-md text-label-md text-on-surface uppercase tracking-widest mb-4 border-b border-outline-variant/30 pb-2">Notifications</h2>
+                    <div class="flex flex-col gap-4 font-data-sm text-data-sm">
+                        <label class="flex items-center justify-between cursor-pointer py-2">
+                            <div>
+                                <div class="text-on-surface font-data-md">Email me when scan completes</div>
+                                <div class="text-outline text-xs mt-1">Receive an email summary when a deep scan finishes.</div>
+                            </div>
+                            <div class="toggle @(notifyScanComplete ? "active" : "")" 
+                                 @onclick="async () => { notifyScanComplete = !notifyScanComplete; await SaveNotifications(); }"
+                                 style="width:44px;height:24px;border-radius:12px;
+                                        background:@(notifyScanComplete ? "#3B82F6" : "#4B5563");
+                                        cursor:pointer;position:relative;transition:background 0.2s;">
+                                <div style="position:absolute;top:2px;
+                                            left:@(notifyScanComplete ? "22px" : "2px");
+                                            width:20px;height:20px;border-radius:50%;
+                                            background:white;transition:left 0.2s;"></div>
+                            </div>
+                        </label>
+                        <label class="flex items-center justify-between cursor-pointer py-2">
+                            <div>
+                                <div class="text-on-surface font-data-md">Alert on new Critical issues</div>
+                                <div class="text-outline text-xs mt-1">Immediate alerts for zero-days or exposed secrets.</div>
+                            </div>
+                            <div class="toggle @(notifyCritical ? "active" : "")" 
+                                 @onclick="async () => { notifyCritical = !notifyCritical; await SaveNotifications(); }"
+                                 style="width:44px;height:24px;border-radius:12px;
+                                        background:@(notifyCritical ? "#EF4444" : "#4B5563");
+                                        cursor:pointer;position:relative;transition:background 0.2s;">
+                                <div style="position:absolute;top:2px;
+                                            left:@(notifyCritical ? "22px" : "2px");
+                                            width:20px;height:20px;border-radius:50%;
+                                            background:white;transition:left 0.2s;"></div>
+                            </div>
+                        </label>
+                        <label class="flex items-center justify-between cursor-pointer py-2">
+                            <div>
+                                <div class="text-on-surface font-data-md">Weekly code health digest</div>
+                                <div class="text-outline text-xs mt-1">A roundup of your team's code quality trends.</div>
+                            </div>
+                            <div class="toggle @(notifyWeekly ? "active" : "")" 
+                                 @onclick="async () => { notifyWeekly = !notifyWeekly; await SaveNotifications(); }"
+                                 style="width:44px;height:24px;border-radius:12px;
+                                        background:@(notifyWeekly ? "#3B82F6" : "#4B5563");
+                                        cursor:pointer;position:relative;transition:background 0.2s;">
+                                <div style="position:absolute;top:2px;
+                                            left:@(notifyWeekly ? "22px" : "2px");
+                                            width:20px;height:20px;border-radius:50%;
+                                            background:white;transition:left 0.2s;"></div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- API KEYS SECTION -->
+                <div>
+                    <div class="flex justify-between items-center mb-4 border-b border-outline-variant/30 pb-2">
+                        <h2 class="font-label-md text-label-md text-on-surface uppercase tracking-widest flex items-center">
+                            <span class="material-symbols-outlined mr-2 text-sm">vpn_key</span> API Keys
+                        </h2>
+                    </div>
+
+                    @if (planType == "FREE")
+                    {
+                        <div class="bg-surface-container-high border border-outline-variant/30 rounded-DEFAULT p-6 text-center">
+                            <span class="material-symbols-outlined text-4xl text-outline mb-2">lock</span>
+                            <h3 class="text-on-surface font-data-md mb-2">API Access is locked</h3>
+                            <p class="text-outline text-sm mb-4">Upgrade to the TEAM plan to generate API keys for CI/CD integration.</p>
+                            <a href="/pricing" class="px-6 py-2 bg-primary/20 text-primary border border-primary rounded-DEFAULT uppercase tracking-widest text-xs hover:bg-primary/30 inline-block">View Pricing</a>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="flex flex-col gap-4">
+                            @if (apiKeys != null && apiKeys.Any())
+                            {
+                                <div class="overflow-x-auto">
+                                    <table class="w-full text-left font-data-sm text-sm whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-outline border-b border-outline-variant/20">
+                                                <th class="pb-2 font-normal">Name</th>
+                                                <th class="pb-2 font-normal">Created</th>
+                                                <th class="pb-2 font-normal">Last Used</th>
+                                                <th class="pb-2 font-normal text-right">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var key in apiKeys)
+                                            {
+                                                <tr class="border-b border-outline-variant/10 last:border-0 hover:bg-surface-container-highest/20 transition-colors">
+                                                    <td class="py-3 text-on-surface">
+                                                        @if (editingKeyId == key.Id)
+                                                        {
+                                                            <div class="flex gap-2 items-center">
+                                                                <input @bind="editKeyName" class="bg-surface-container border border-outline-variant focus:border-primary px-2 py-1 rounded text-sm w-32" />
+                                                                <button @onclick="() => SaveKeyName(key.Id)" class="text-primary hover:text-primary-fixed uppercase text-xs tracking-wider font-bold">Save</button>
+                                                                <button @onclick="CancelEditKey" class="text-outline hover:text-on-surface uppercase text-xs tracking-wider">Cancel</button>
+                                                            </div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <div class="flex items-center gap-2">
+                                                                <span>@key.Name</span>
+                                                                <button @onclick="() => StartEditKey(key)" class="text-outline hover:text-primary transition-colors" title="Rename Key">
+                                                                    <span class="material-symbols-outlined text-sm">edit</span>
+                                                                </button>
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                    <td class="py-3 text-outline">@key.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")</td>
+                                                    <td class="py-3 text-outline">@(key.LastUsed.HasValue ? key.LastUsed.Value.ToLocalTime().ToString("MMM dd") : "Never")</td>
+                                                    <td class="py-3 text-right">
+                                                        <button @onclick="() => RevokeKey(key.Id)" class="text-error hover:text-error/80 uppercase text-xs tracking-wider font-bold">Revoke</button>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                            else
+                            {
+                                <p class="text-outline text-sm italic">No API keys generated yet.</p>
+                            }
+
+                            <EditForm Model="apiKeyModel" OnValidSubmit="GenerateKey" class="mt-2 flex flex-col gap-1">
+                                <DataAnnotationsValidator />
+                                <ValidationSummary class="text-error text-xs mb-2 list-none p-0" />
+                                <div class="flex gap-2">
+                                    <InputText @bind-Value="apiKeyModel.Name" placeholder="Key name (e.g. GitHub Actions)" class="bg-surface-container border border-outline-variant focus:border-primary p-2 rounded-DEFAULT text-on-surface text-sm w-64" />
+                                    <button type="submit" disabled="@isGeneratingKey" class="bg-primary/20 border border-primary text-primary px-4 py-2 rounded-DEFAULT hover:bg-primary/30 text-xs uppercase tracking-widest disabled:opacity-50">Generate New Key</button>
+                                </div>
+                                <ValidationMessage For="@(() => apiKeyModel.Name)" class="text-error text-xs font-data-sm" />
+                            </EditForm>
+
+                            @if (!string.IsNullOrEmpty(newlyGeneratedKey))
+                            {
+                                <div class="mt-4 p-4 border border-tertiary bg-tertiary/10 rounded-DEFAULT">
+                                    <div class="flex items-center text-tertiary gap-2 mb-2">
+                                        <span class="material-symbols-outlined">warning</span>
+                                        <span class="font-bold text-sm uppercase tracking-wider">Copy this key now</span>
+                                    </div>
+                                    <p class="text-outline text-xs mb-3">For security reasons, this key will not be shown again.</p>
+                                    <div class="flex gap-2">
+                                        <code class="flex-1 bg-surface-container-high text-on-surface p-2 rounded-DEFAULT font-mono text-sm break-all">@newlyGeneratedKey</code>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <!-- DATA SECTION -->
+                <div>
+                    <h2 class="font-label-md text-label-md text-on-surface uppercase tracking-widest mb-4 border-b border-outline-variant/30 pb-2">Data & Application</h2>
+                    <div class="flex flex-col gap-3 font-data-sm text-data-sm">
+                        <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                            <span class="text-outline">Scan History</span>
+                            <span class="text-on-surface font-data-md">@scanCount scans locally cached</span>
+                        </div>
+                        <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                            <span class="text-outline">API Endpoint</span>
+                            <span class="text-on-surface font-data-md font-mono text-xs">@apiEndpoint</span>
+                        </div>
+                        <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                            <span class="text-outline">Frontend Version</span>
+                            <span class="text-primary font-data-md">2.0.0</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- DANGER ZONE -->
+        <div class="bg-surface-container/60 backdrop-blur-md border border-error/50 rounded-DEFAULT p-8 relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-1 h-full bg-error"></div>
+            <h2 class="font-label-md text-label-md text-error uppercase tracking-widest mb-6 flex items-center">
+                <span class="material-symbols-outlined mr-2 text-sm">dangerous</span> Danger Zone
+            </h2>
+            <div class="flex flex-col gap-6">
+                <div class="flex items-center justify-between flex-wrap gap-4">
+                    <div>
+                        <div class="font-data-md text-data-md text-on-surface">Export My Data</div>
+                        <div class="font-body-md text-outline text-sm mt-1">Download all your scan history and reports as a JSON file.</div>
+                    </div>
+                    <button @onclick="ExportData" class="border border-outline-variant text-on-surface px-4 py-2 font-label-sm text-label-sm uppercase hover:bg-surface-container-high transition-colors rounded-DEFAULT flex items-center gap-2">
+                        <span class="material-symbols-outlined text-sm">download</span> Export JSON
+                    </button>
+                </div>
+                
+                <div class="w-full h-px bg-outline-variant/20"></div>
+
+                <div class="flex items-center justify-between flex-wrap gap-4">
+                    <div>
+                        <div class="font-data-md text-data-md text-on-surface">Clear All Scan History</div>
+                        <div class="font-body-md text-outline text-sm mt-1">Permanently remove all scan records from the database.</div>
+                    </div>
+                    <button @onclick="PromptClearHistory" class="border border-error text-error px-4 py-2 font-label-sm text-label-sm uppercase hover:bg-error/10 transition-colors rounded-DEFAULT">
+                        Clear History
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-center">
+            <button @onclick='() => Nav.NavigateTo("/dashboard")' class="bg-primary/20 border border-primary text-primary px-8 py-3 font-label-md text-label-md uppercase hover:bg-primary/30 transition-all rounded-DEFAULT flex items-center gap-2">
+                <span class="material-symbols-outlined">arrow_back</span> Back to Dashboard
+            </button>
+        </div>
+    </div>
+</main>
+
+@if (showClearModal)
+{
+    <div class="fixed inset-0 bg-surface/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 page-enter">
+        <div class="bg-surface-container border border-error/50 rounded-DEFAULT p-6 max-w-md w-full shadow-2xl">
+            <h3 class="text-error font-section-header mb-4 flex items-center"><span class="material-symbols-outlined mr-2">warning</span> Delete all data?</h3>
+            <p class="text-on-surface mb-6 font-body-md">This action cannot be undone. All your scan history will be permanently erased.</p>
+            <div class="flex justify-end gap-3">
+                <button @onclick="() => showClearModal = false" class="px-4 py-2 text-outline hover:text-on-surface uppercase tracking-wider text-sm">Cancel</button>
+                <button @onclick="ClearHistory" class="px-4 py-2 bg-error text-white uppercase tracking-wider text-sm rounded-DEFAULT hover:bg-error/80">Yes, Delete Everything</button>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+@code {
+    private int scanCount = 0;
+    private string userEmail = "Loading...";
+    private string userId = "Loading...";
+    private string apiEndpoint = "";
+
+    // Profile & Plan
+    private ProfileFormModel profileModel = new();
+    private string displayName = "";
+    private bool isEditingName = false;
+    private string planType = "FREE";
+    private int scansThisMonth = 0;
+    private int scanLimit = 3;
+
+    // Notifications
+    private bool notifyScanComplete = true;
+    private bool notifyCritical = true;
+    private bool notifyWeekly = false;
+
+    // API Keys
+    private List<ApiKeyModel> apiKeys = new();
+    private ApiKeyFormModel apiKeyModel = new();
+    private string newlyGeneratedKey = "";
+    private bool isGeneratingKey = false;
+    private string? editingKeyId = null;
+    private string editKeyName = "";
+
+    // Danger Zone
+    private bool showClearModal = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        apiEndpoint = Configuration["ApiBaseUrl"] ?? "Not configured";
+        var user = Supabase.Auth.CurrentUser;
+        if (user != null)
+        {
+            userEmail = user.Email ?? "Unknown";
+            userId = user.Id ?? "Unknown";
+        }
+
+        await LoadData();
+        await LoadSettings();
+    }
+
+    private async Task LoadData()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            
+            // Get Plan and Profile
+            var planInfo = await client.GetFromJsonAsync<PlanInfoModel>("api/user/plan");
+            if (planInfo != null)
+            {
+                planType = planInfo.PlanType;
+                scansThisMonth = planInfo.ScansThisMonth;
+                scanLimit = planInfo.Limit;
+                displayName = planInfo.DisplayName;
+            }
+
+            // Get History count
+            var history = await client.GetFromJsonAsync<List<CodeSentryAI.Models.RecentScan>>("api/scan/history");
+            scanCount = history?.Count ?? 0;
+
+            // Get API Keys if allowed
+            if (planType == "TEAM" || planType == "PRO")
+            {
+                apiKeys = await client.GetFromJsonAsync<List<ApiKeyModel>>("api/keys") ?? new();
+            }
+        }
+        catch { /* Ignore */ }
+    }
+
+    private async Task LoadSettings()
+    {
+        try
+        {
+            var ncStr = await JS.InvokeAsync<string>("localStorage.getItem", "notifyScanComplete");
+            if (ncStr != null) notifyScanComplete = ncStr == "true";
+
+            var ncritStr = await JS.InvokeAsync<string>("localStorage.getItem", "notifyCritical");
+            if (ncritStr != null) notifyCritical = ncritStr == "true";
+
+            var nwStr = await JS.InvokeAsync<string>("localStorage.getItem", "notifyWeekly");
+            if (nwStr != null) notifyWeekly = nwStr == "true";
+        }
+        catch { }
+    }
+
+    private async Task SaveNotifications()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", "notifyScanComplete", notifyScanComplete.ToString().ToLower());
+            await JS.InvokeVoidAsync("localStorage.setItem", "notifyCritical", notifyCritical.ToString().ToLower());
+            await JS.InvokeVoidAsync("localStorage.setItem", "notifyWeekly", notifyWeekly.ToString().ToLower());
+            Toast.ShowSuccess("Notification preferences saved.");
+        }
+        catch { }
+    }
+
+    private void StartEditName()
+    {
+        profileModel.DisplayName = displayName;
+        isEditingName = true;
+    }
+
+    private void CancelEditName()
+    {
+        isEditingName = false;
+    }
+
+    private async Task SaveDisplayName()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var response = await client.PatchAsJsonAsync("api/user/profile", new { DisplayName = profileModel.DisplayName });
+            if (response.IsSuccessStatusCode)
+            {
+                displayName = profileModel.DisplayName;
+                isEditingName = false;
+                Toast.ShowSuccess("Profile updated.");
+            }
+        }
+        catch
+        {
+            Toast.ShowError("Failed to update profile.");
+        }
+    }
+
+    private async Task GenerateKey()
+    {
+        try
+        {
+            isGeneratingKey = true;
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var response = await client.PostAsJsonAsync("api/keys", new { Name = apiKeyModel.Name });
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ApiKeyResult>();
+                if (result != null)
+                {
+                    newlyGeneratedKey = result.KeyValue;
+                    apiKeyModel.Name = ""; // Reset form
+                    await LoadData(); // Refresh list
+                    Toast.ShowSuccess("API key generated successfully.");
+                }
+            }
+        }
+        catch
+        {
+            Toast.ShowError("Failed to generate API key.");
+        }
+        finally
+        {
+            isGeneratingKey = false;
+        }
+    }
+
+    private async Task RevokeKey(string id)
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var response = await client.DeleteAsync($"api/keys/{id}");
+            if (response.IsSuccessStatusCode)
+            {
+                apiKeys.RemoveAll(k => k.Id == id);
+                Toast.ShowSuccess("API key revoked.");
+            }
+        }
+        catch
+        {
+            Toast.ShowError("Failed to revoke key.");
+        }
+    }
+
+    private void StartEditKey(ApiKeyModel key)
+    {
+        editingKeyId = key.Id;
+        editKeyName = key.Name;
+    }
+
+    private void CancelEditKey()
+    {
+        editingKeyId = null;
+    }
+
+    private async Task SaveKeyName(string id)
+    {
+        if (string.IsNullOrWhiteSpace(editKeyName)) return;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var response = await client.PatchAsJsonAsync($"api/keys/{id}", new { Name = editKeyName });
+            if (response.IsSuccessStatusCode)
+            {
+                var key = apiKeys.FirstOrDefault(k => k.Id == id);
+                if (key != null) key.Name = editKeyName;
+                editingKeyId = null;
+                Toast.ShowSuccess("API key renamed.");
+            }
+            else
+            {
+                Toast.ShowError("Failed to rename API key.");
+            }
+        }
+        catch
+        {
+            Toast.ShowError("Error renaming API key.");
+        }
+    }
+
+    private async Task ExportData()
+    {
+        try
+        {
+            // Triggers a download by navigating to the API endpoint
+            var url = $"{apiEndpoint.TrimEnd('/')}/api/user/export";
+            await JS.InvokeVoidAsync("window.open", url, "_blank");
+            Toast.ShowSuccess("Data export started.");
+        }
+        catch
+        {
+            Toast.ShowError("Failed to export data.");
+        }
+    }
+
+    private void PromptClearHistory()
+    {
+        showClearModal = true;
+    }
+
+    private async Task ClearHistory()
+    {
+        try
+        {
+            showClearModal = false;
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var response = await client.DeleteAsync("api/scan/history");
+            if (response.IsSuccessStatusCode)
+            {
+                scanCount = 0;
+                Toast.ShowSuccess("Scan history cleared successfully.");
+            }
+            else
+            {
+                Toast.ShowError("Failed to clear scan history.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Error: {ex.Message}");
+        }
+    }
+
+    private async Task HandleLogout()
+    {
+        await Supabase.Auth.SignOut();
+        Nav.NavigateTo("/login");
+    }
+
+    // Models for deserialization
+    public class PlanInfoModel
+    {
+        public string PlanType { get; set; } = "FREE";
+        public int ScansThisMonth { get; set; }
+        public int Limit { get; set; }
+        public int Remaining { get; set; }
+        public string DisplayName { get; set; } = "";
+        public bool IsAdmin { get; set; } = false;
+    }
+
+    public class ApiKeyModel
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
+        public DateTime? LastUsed { get; set; }
+    }
+
+    public class ApiKeyResult : ApiKeyModel
+    {
+        public string KeyValue { get; set; } = "";
+    }
+}

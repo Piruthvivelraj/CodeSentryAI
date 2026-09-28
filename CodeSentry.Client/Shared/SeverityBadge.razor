@@ -1,0 +1,25 @@
+@* ============================================================
+   SeverityBadge.razor — Coloured severity pill badge
+   Parameters:
+     Severity — "Critical" | "Warning" | "Info"
+     Small    — if true uses smaller padding
+   ============================================================ *@
+
+<span class="inline-flex items-center font-data-sm uppercase tracking-wider border rounded-sm @(Small ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-xs")"
+      style="color: @Color; border-color: @Color+'40'; background: @Color+'1a';">
+    <span class="w-1.5 h-1.5 rounded-full mr-1.5 flex-shrink-0" style="background: @Color;"></span>
+    @Severity
+</span>
+
+@code {
+    [Parameter, EditorRequired] public string Severity { get; set; } = "Info";
+    [Parameter]                 public bool   Small    { get; set; } = false;
+
+    private string Color => Severity switch
+    {
+        "Critical" => "#EF4444",
+        "Warning"  => "#F59E0B",
+        "Info"     => "#3B82F6",
+        _          => "#6B7280"
+    };
+}

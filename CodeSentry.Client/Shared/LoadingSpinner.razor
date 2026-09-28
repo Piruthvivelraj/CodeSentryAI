@@ -1,0 +1,27 @@
+@* ============================================================
+   LoadingSpinner.razor — Reusable loading indicator
+   Parameters:
+     Label    — text shown below spinner
+     FullPage — if true, centres in the full available space
+   ============================================================ *@
+
+@if (FullPage)
+{
+    <div class="loading-container flex-1" style="min-height: @MinHeight;">
+        <div class="loading-spinner"></div>
+        <span class="font-data-sm text-outline mt-3">@Label</span>
+    </div>
+}
+else
+{
+    <div class="flex items-center gap-3 py-4 justify-center">
+        <div class="loading-spinner" style="width:20px;height:20px;border-width:2px;"></div>
+        <span class="font-data-sm text-outline text-sm">@Label</span>
+    </div>
+}
+
+@code {
+    [Parameter] public string Label    { get; set; } = "Loading...";
+    [Parameter] public bool   FullPage { get; set; } = false;
+    [Parameter] public string MinHeight{ get; set; } = "200px";
+}

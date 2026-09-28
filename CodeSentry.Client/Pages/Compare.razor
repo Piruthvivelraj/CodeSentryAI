@@ -1,0 +1,306 @@
+@page "/compare"
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+@inject CodeSentryAI.Services.ToastService Toast
+@using CodeSentryAI.Models
+@using System.Globalization
+
+<PageTitle>CodeSentry AI — Compare Scans</PageTitle>
+
+<main class="lg:ml-[64px] mt-12 p-margin min-h-screen w-full lg:w-[calc(100%-64px)] flex flex-col page-enter page-wrapper">
+    <div class="flex justify-between items-end mb-8">
+        <div>
+            <h1 class="font-display text-display text-on-surface mb-2">SCAN COMPARISON</h1>
+            <p class="font-body-lg text-outline">Compare health scores, track tech debt trends, and view fixed/new issues.</p>
+        </div>
+        
+        @if (allScans.Count >= 2 && !isLoading)
+        {
+            <div class="hidden md:flex flex-col items-end w-48">
+                <span class="text-outline text-[10px] font-label-sm tracking-widest uppercase mb-1">SCORE TREND (LAST 5)</span>
+                <div class="w-full h-8 text-primary opacity-80">
+                    <svg width="100%" height="100%" viewBox="0 0 100 40" preserveAspectRatio="none">
+                        <polyline points="@GetTrendPoints()" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container" style="min-height: 60vh;"><div class="loading-spinner"></div><span class="font-data-sm">Loading scans...</span></div>
+    }
+    else
+    {
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+            <div class="bg-surface-container/40 border border-outline-variant/30 p-6">
+                <label class="font-label-sm text-outline uppercase mb-2 block">OLDER SCAN (BASELINE)</label>
+                <select @bind="scanIdA" class="w-full bg-surface-container-highest border border-outline-variant/50 text-on-surface p-3 outline-none focus:border-primary/50 transition-colors font-data-sm mb-4">
+                    <option value="">-- Select Scan --</option>
+                    @foreach (var scan in allScans.OrderByDescending(s => s.CreatedAt))
+                    {
+                        <option value="@scan.Id">@($"{scan.RepositoryName} • {scan.Score}/100 • {scan.CreatedAt:MMM dd HH:mm}")</option>
+                    }
+                </select>
+            </div>
+
+            <div class="bg-surface-container/40 border border-outline-variant/30 p-6">
+                <label class="font-label-sm text-outline uppercase mb-2 block">NEWER SCAN</label>
+                <select @bind="scanIdB" class="w-full bg-surface-container-highest border border-outline-variant/50 text-on-surface p-3 outline-none focus:border-primary/50 transition-colors font-data-sm mb-4">
+                    <option value="">-- Select Scan --</option>
+                    @foreach (var scan in allScans.OrderByDescending(s => s.CreatedAt))
+                    {
+                        <option value="@scan.Id">@($"{scan.RepositoryName} • {scan.Score}/100 • {scan.CreatedAt:MMM dd HH:mm}")</option>
+                    }
+                </select>
+            </div>
+        </div>
+
+        <div class="flex justify-center mb-12">
+            <button @onclick="CompareScans" disabled="@(string.IsNullOrEmpty(scanIdA) || string.IsNullOrEmpty(scanIdB))" class="bg-primary/10 glow-border-primary text-primary px-8 py-3 font-label-md text-label-md uppercase tracking-wider hover:bg-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                COMPARE NOW
+            </button>
+        </div>
+
+        @if (comparisonReady)
+        {
+            <!-- NET HEALTH SUMMARY -->
+            <div class="mb-8 p-4 @(scoreDelta >= 0 ? "bg-success/10 border-success" : "bg-error/10 border-error") border rounded-DEFAULT flex items-center gap-3">
+                <span class="material-symbols-outlined text-2xl @(scoreDelta >= 0 ? "text-success" : "text-error")">
+                    @(scoreDelta >= 0 ? "trending_up" : "trending_down")
+                </span>
+                <div>
+                    <span class="font-data-md text-on-surface">Health @(scoreDelta >= 0 ? "improved" : "declined") by @Math.Abs(scoreDelta) points.</span>
+                    <span class="text-outline text-sm font-body-md ml-2">@fixedIssues.Count issues fixed, @newIssues.Count new issues introduced.</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+                <!-- Health Score -->
+                <div class="bg-surface-container/40 border border-outline-variant/30 p-6 flex flex-col gap-4 relative">
+                    <span class="font-section-header text-outline text-center">HEALTH SCORE</span>
+                    <div class="flex justify-between items-center text-3xl font-data-lg">
+                        <span class="text-outline/70">@scoreA</span>
+                        <span class="material-symbols-outlined text-outline">arrow_forward</span>
+                        <span class="text-primary font-bold">@scoreB</span>
+                    </div>
+                    <div class="absolute top-4 right-4 flex items-center font-bold text-sm @(scoreDelta > 0 ? "text-success" : scoreDelta < 0 ? "text-error" : "text-outline")">
+                        @if (scoreDelta != 0) { <span class="material-symbols-outlined text-[16px]">@(scoreDelta > 0 ? "arrow_upward" : "arrow_downward")</span> }
+                        @(scoreDelta > 0 ? "+" : "")@scoreDelta
+                    </div>
+                </div>
+
+                <!-- Critical Issues -->
+                <div class="bg-surface-container/40 border border-outline-variant/30 p-6 flex flex-col gap-4 relative">
+                    <span class="font-section-header text-outline text-center">CRITICAL ISSUES</span>
+                    <div class="flex justify-between items-center text-3xl font-data-lg">
+                        <span class="text-outline/70">@criticalA</span>
+                        <span class="material-symbols-outlined text-outline">arrow_forward</span>
+                        <span class="text-error font-bold">@criticalB</span>
+                    </div>
+                    <div class="absolute top-4 right-4 flex items-center font-bold text-sm @(criticalDelta < 0 ? "text-success" : criticalDelta > 0 ? "text-error" : "text-outline")">
+                        @if (criticalDelta != 0) { <span class="material-symbols-outlined text-[16px]">@(criticalDelta > 0 ? "arrow_upward" : "arrow_downward")</span> }
+                        @(criticalDelta > 0 ? "+" : "")@criticalDelta
+                    </div>
+                </div>
+
+                <!-- Warnings -->
+                <div class="bg-surface-container/40 border border-outline-variant/30 p-6 flex flex-col gap-4 relative">
+                    <span class="font-section-header text-outline text-center">WARNINGS</span>
+                    <div class="flex justify-between items-center text-3xl font-data-lg">
+                        <span class="text-outline/70">@warningA</span>
+                        <span class="material-symbols-outlined text-outline">arrow_forward</span>
+                        <span class="text-[#fbbf24] font-bold">@warningB</span>
+                    </div>
+                    <div class="absolute top-4 right-4 flex items-center font-bold text-sm @(warningDelta < 0 ? "text-success" : warningDelta > 0 ? "text-error" : "text-outline")">
+                        @if (warningDelta != 0) { <span class="material-symbols-outlined text-[16px]">@(warningDelta > 0 ? "arrow_upward" : "arrow_downward")</span> }
+                        @(warningDelta > 0 ? "+" : "")@warningDelta
+                    </div>
+                </div>
+            </div>
+
+            <!-- ISSUES BREAKDOWN -->
+            <h2 class="font-display text-display text-on-surface mb-6 uppercase tracking-widest text-xl">Issue Delta</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+                
+                <!-- FIXED ISSUES -->
+                <div class="bg-surface-container/20 border border-success/30 rounded-DEFAULT overflow-hidden flex flex-col">
+                    <div class="bg-success/10 border-b border-success/30 p-4 flex items-center justify-between">
+                        <span class="font-label-sm text-success uppercase tracking-widest flex items-center"><span class="material-symbols-outlined mr-2 text-[18px]">task_alt</span> FIXED IN NEWER SCAN</span>
+                        <span class="bg-success text-white text-[10px] font-bold px-2 py-0.5 rounded-sm">@fixedIssues.Count</span>
+                    </div>
+                    <div class="p-4 flex-1 overflow-y-auto max-h-96 space-y-3">
+                        @if (fixedIssues.Any())
+                        {
+                            @foreach (var issue in fixedIssues)
+                            {
+                                <div class="p-3 bg-surface-container-high/50 border border-outline-variant/20 rounded-sm">
+                                    <div class="text-sm font-data-md text-on-surface truncate">@issue.Title</div>
+                                    <div class="text-xs text-outline font-mono mt-1 truncate">@issue.Location</div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div class="text-outline text-sm text-center py-8 opacity-50 italic">No issues were fixed.</div>
+                        }
+                    </div>
+                </div>
+
+                <!-- NEW ISSUES -->
+                <div class="bg-surface-container/20 border border-error/30 rounded-DEFAULT overflow-hidden flex flex-col">
+                    <div class="bg-error/10 border-b border-error/30 p-4 flex items-center justify-between">
+                        <span class="font-label-sm text-error uppercase tracking-widest flex items-center"><span class="material-symbols-outlined mr-2 text-[18px]">new_releases</span> NEW ISSUES INTRODUCED</span>
+                        <span class="bg-error text-white text-[10px] font-bold px-2 py-0.5 rounded-sm">@newIssues.Count</span>
+                    </div>
+                    <div class="p-4 flex-1 overflow-y-auto max-h-96 space-y-3">
+                        @if (newIssues.Any())
+                        {
+                            @foreach (var issue in newIssues)
+                            {
+                                <div class="p-3 bg-error/5 border border-error/20 rounded-sm">
+                                    <div class="text-sm font-data-md text-error truncate">@issue.Title</div>
+                                    <div class="text-xs text-outline font-mono mt-1 truncate">@issue.Location</div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div class="text-outline text-sm text-center py-8 opacity-50 italic">No new issues! Great job.</div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+        else if (noData)
+        {
+            <div class="flex flex-col items-center justify-center py-16 gap-4">
+                <span class="material-symbols-outlined text-outline text-5xl opacity-30">compare_arrows</span>
+                <p class="font-body-md text-outline text-center">Not enough scan data to compare. Run at least 2 scans first.</p>
+            </div>
+        }
+    }
+</main>
+
+@code {
+    private bool isLoading = true;
+    private bool comparisonReady = false;
+    private bool noData = false;
+    private string? scanIdA;
+    private string? scanIdB;
+    private List<RecentScan> allScans = new();
+
+    private int scoreA;
+    private int scoreB;
+    private int scoreDelta => scoreB - scoreA;
+
+    private int criticalA;
+    private int criticalB;
+    private int criticalDelta => criticalB - criticalA;
+
+    private int warningA;
+    private int warningB;
+    private int warningDelta => warningB - warningA;
+
+    private List<CodeIssue> fixedIssues = new();
+    private List<CodeIssue> newIssues = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var history = await client.GetFromJsonAsync<List<RecentScan>>("api/scan/history");
+            if (history != null && history.Count > 0)
+            {
+                allScans = history;
+                noData = history.Count < 2;
+                
+                // Preselect latest two if available
+                if (history.Count >= 2)
+                {
+                    var sorted = history.OrderByDescending(s => s.CreatedAt).ToList();
+                    scanIdB = sorted[0].Id; // Newer
+                    scanIdA = sorted[1].Id; // Older
+                }
+            }
+            else
+            {
+                allScans = new List<RecentScan>();
+                noData = true;
+            }
+        }
+        catch
+        {
+            allScans = new List<RecentScan>();
+            noData = true;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetTrendPoints()
+    {
+        var recent = allScans.OrderBy(s => s.CreatedAt).TakeLast(5).ToList();
+        if (recent.Count < 2) return "";
+        var points = new List<string>();
+        for (int i = 0; i < recent.Count; i++)
+        {
+            double x = (100.0 / (recent.Count - 1)) * i;
+            double score = recent[i].Score;
+            double y = 40 - (score * 0.4); // Scale 0-100 to 40-0
+            points.Add($"{x.ToString(CultureInfo.InvariantCulture)},{y.ToString(CultureInfo.InvariantCulture)}");
+        }
+        return string.Join(" ", points);
+    }
+
+    private async Task CompareScans()
+    {
+        if (string.IsNullOrEmpty(scanIdA) || string.IsNullOrEmpty(scanIdB)) return;
+        
+        if (scanIdA == scanIdB)
+        {
+            Toast.ShowError("Cannot compare a scan with itself. Select two different scans.");
+            return;
+        }
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var reportA = await client.GetFromJsonAsync<ScanResultDto>($"api/scan/{scanIdA}/report");
+            var reportB = await client.GetFromJsonAsync<ScanResultDto>($"api/scan/{scanIdB}/report");
+
+            if (reportA != null && reportB != null)
+            {
+                scoreA = reportA.Score;
+                scoreB = reportB.Score;
+
+                criticalA = reportA.Issues.Count(i => i.Severity == "Critical");
+                criticalB = reportB.Issues.Count(i => i.Severity == "Critical");
+
+                warningA = reportA.Issues.Count(i => i.Severity == "Warning");
+                warningB = reportB.Issues.Count(i => i.Severity == "Warning");
+
+                // Issue Delta Logic
+                var issuesA = reportA.Issues.ToDictionary(i => $"{i.FilePath}::{i.Title}");
+                var issuesB = reportB.Issues.ToDictionary(i => $"{i.FilePath}::{i.Title}");
+
+                fixedIssues = issuesA.Values.Where(i => !issuesB.ContainsKey($"{i.FilePath}::{i.Title}")).ToList();
+                newIssues = issuesB.Values.Where(i => !issuesA.ContainsKey($"{i.FilePath}::{i.Title}")).ToList();
+
+                comparisonReady = true;
+            }
+            else
+            {
+                noData = true;
+            }
+        }
+        catch
+        {
+            noData = true;
+        }
+    }
+}

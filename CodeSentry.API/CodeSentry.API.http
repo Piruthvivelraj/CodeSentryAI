@@ -1,0 +1,6 @@
+@CodeSentry.API_HostAddress = http://localhost:5001
+
+GET {{CodeSentry.API_HostAddress}}/api/scan/history
+Accept: application/json
+
+###

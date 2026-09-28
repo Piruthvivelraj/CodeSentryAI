@@ -1,0 +1,497 @@
+@page "/scan"
+@attribute [Authorize]
+@inject CodeSentryAI.Services.ToastService Toast
+@using System.Text.Json
+@using Supabase.Realtime
+@using Supabase.Realtime.PostgresChanges
+@inject IHttpClientFactory HttpClientFactory
+@inject Supabase.Client SupabaseClient
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthStateProvider
+@implements IAsyncDisposable
+@using CodeSentryAI.Models
+
+<PageTitle>CodeSentry AI - Scanner</PageTitle>
+
+<div class="fixed inset-0 pointer-events-none z-0 scan-lines"></div>
+
+<main class="relative z-10 page-enter flex gap-6 pt-[80px] lg:pl-[88px] pl-6 pr-6 pb-6 h-screen overflow-hidden w-full max-w-[1600px] mx-auto page-wrapper">
+    <!-- LEFT COLUMN (55%) -->
+    <div class="flex-[0_0_55%] flex flex-col gap-[1.5rem] min-w-0">
+        <!-- Scan Target Panel -->
+        <div class="bg-surface-container-low/60 backdrop-blur-md border border-outline-variant/30 rounded-DEFAULT p-6 shadow-lg relative overflow-hidden shrink-0">
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-transparent opacity-50"></div>
+            <h2 class="font-section-header text-section-header text-primary mb-6 flex items-center">
+                <span class="material-symbols-outlined mr-2 text-sm">radar</span> SCAN TARGET
+            </h2>
+
+            <EditForm Model="scanModel" OnValidSubmit="StartScan" class="space-y-6">
+                <DataAnnotationsValidator />
+                <ValidationSummary class="text-error text-xs mb-2 list-none p-0" />
+
+                <div>
+                    <div class="relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-primary">
+                            <span class="material-symbols-outlined">link</span>
+                        </span>
+                        <InputText @bind-Value="scanModel.RepoUrl"
+                                   class="w-full bg-surface-container-highest/50 border-b border-outline-variant/50 border-t-0 border-l-0 border-r-0 focus:border-primary focus:ring-0 font-data-md text-data-md text-on-surface py-3 pl-10 pr-4 placeholder-outline/50 transition-all hover:bg-surface-container-highest pulse-border outline-none"
+                                   placeholder="https://github.com/username/repository" />
+                    </div>
+                    <ValidationMessage For="@(() => scanModel.RepoUrl)"
+                                       class="text-error text-xs mt-1 font-data-sm block" />
+                </div>
+
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex space-x-2">
+                        <button type="button" class="px-4 py-1.5 rounded-DEFAULT bg-primary/20 border border-primary text-primary font-label-md text-label-md flex items-center shadow-[0_0_8px_rgba(173,198,255,0.3)]">
+                            <span class="material-symbols-outlined mr-1 text-[18px]">public</span> Public Repo
+                        </button>
+                        <button type="button" disabled title="Coming Soon" class="px-4 py-1.5 rounded-DEFAULT bg-transparent border border-outline-variant text-outline font-label-md text-label-md flex items-center opacity-50 cursor-not-allowed">
+                            <span class="material-symbols-outlined mr-1 text-[18px]">lock</span> Private Repo
+                        </button>
+                    </div>
+                    <button type="button" disabled title="Coming Soon" class="flex items-center space-x-2 text-outline bg-surface-container-high border border-outline-variant/50 px-4 py-1.5 rounded-DEFAULT opacity-50 cursor-not-allowed">
+                        <svg aria-hidden="true" class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.699-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.379.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z" fill-rule="evenodd"></path></svg>
+                        <span class="font-label-sm text-label-sm uppercase tracking-wider">Connect</span>
+                    </button>
+                </div>
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="error-banner flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="material-symbols-outlined text-sm">error</span>
+                            <span>@errorMessage</span>
+                        </div>
+                        @if (!isScanning)
+                        {
+                            <button type="button" @onclick="RetryScan" class="text-primary hover:text-primary-fixed font-label-sm text-label-sm uppercase ml-4">Retry</button>
+                        }
+                    </div>
+                }
+
+                <button id="btn-initialize-scan" type="submit" disabled="@(isScanning || isQuotaExhausted)"
+                        class="w-full bg-accent text-white font-data-md text-data-md py-4 rounded-DEFAULT uppercase tracking-widest hover:bg-[#2563EB] transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] hover:shadow-[0_0_25px_rgba(59,130,246,0.8)] relative overflow-hidden group disabled:opacity-50 disabled:cursor-not-allowed">
+                    <div class="absolute inset-0 w-8 bg-white/20 skew-x-[45deg] -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>
+                    <span class="relative z-10 flex items-center justify-center">
+                        <span class="material-symbols-outlined mr-2">bolt</span>
+                        @(isScanning ? "SCANNING..." : "INITIALIZE SCAN")
+                    </span>
+                </button>
+                @if (isQuotaExhausted)
+                {
+                    <div class="mt-2 p-3 bg-error/10 border border-error text-error text-sm rounded-DEFAULT text-center">
+                        You've used all @scansLimit free scans this month. <a href="/pricing" class="underline font-bold">Upgrade to Pro</a> for unlimited.
+                    </div>
+                }
+                <button id="btn-cancel-scan" type="button" @onclick="CancelScan" hidden="@(!isScanning)" class="sr-only"></button>
+            </EditForm>
+        </div>
+
+        <!-- Progress Panel -->
+        <div class="bg-surface-container-low/60 backdrop-blur-md border border-outline-variant/30 rounded-DEFAULT p-6 shadow-lg flex-1 overflow-y-auto">
+            <div class="space-y-6 font-data-sm text-data-sm">
+                @foreach (var stage in stages)
+                {
+                    var idx = Array.IndexOf(stages, stage);
+                    var currentIdx = GetStageIndex(scanStatus);
+                    var isDone = currentIdx > idx;
+                    var isActive = currentIdx == idx && isScanning;
+                    <div class="flex items-start">
+                        <div class="flex flex-col items-center mr-4">
+                            @if (isDone)
+                            {
+                                <div class="w-6 h-6 rounded-full border border-tertiary bg-tertiary/20 flex items-center justify-center text-tertiary shadow-[0_0_8px_rgba(78,222,163,0.4)]"><span class="material-symbols-outlined text-[14px]">check</span></div>
+                            }
+                            else if (isActive)
+                            {
+                                <div class="w-6 h-6 rounded-full border border-primary bg-primary/20 flex items-center justify-center text-primary shadow-[0_0_12px_rgba(173,198,255,0.6)] pulse-border"><div class="w-2 h-2 rounded-full bg-primary animate-ping"></div></div>
+                            }
+                            else
+                            {
+                                <div class="w-6 h-6 rounded-full border border-outline-variant bg-surface-container flex items-center justify-center text-outline"><span class="material-symbols-outlined text-[14px]">circle</span></div>
+                            }
+                            @if (idx < stages.Length - 1)
+                            {
+                                <div class="w-px h-8 @(isDone ? "bg-tertiary/50" : "bg-outline-variant/50") my-1"></div>
+                            }
+                        </div>
+                        <div class="flex-1 pt-1">
+                            <div class="flex justify-between items-center @(isDone ? "text-tertiary" : isActive ? "text-primary font-bold" : "text-outline")">
+                                <span class="flex items-center">
+                                    @if (isActive && idx == 2) { <span class="material-symbols-outlined text-[14px] mr-2 scan-spinner">sync</span> }
+                                    @stageLabels[idx]
+                                </span>
+                                <span>@(isDone ? "DONE" : isActive ? "PROCESSING..." : "PENDING")</span>
+                            </div>
+                            @if (isActive)
+                            {
+                                <div class="mt-2 w-full h-1 bg-surface-container-highest rounded-full overflow-hidden">
+                                    <div class="h-full bg-primary shadow-[0_0_8px_rgba(173,198,255,0.8)] progress-bar-smooth" style="width: @(progressPercent)%;"></div>
+                                </div>
+                                @if (idx == 0 && !string.IsNullOrEmpty(repoSize))
+                                {
+                                    <div class="mt-2 flex justify-between font-data-sm text-[10px] text-outline-variant uppercase tracking-tighter">
+                                        <span>Size: <span class="text-primary">@repoSize</span></span>
+                                        <span>Est. Time: <span class="text-primary">@estimatedTime</span></span>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT COLUMN (45%) -->
+    <div class="flex-[0_0_45%] flex flex-col gap-[1rem] min-w-0">
+        <!-- Recent Scans Panel -->
+        <div class="flex flex-col min-h-0 h-[40%]">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="font-section-header text-section-header text-outline flex items-center"><span class="material-symbols-outlined mr-2 text-sm">history</span> RECENT SCANS</h2>
+                <a href="/reports" class="text-primary hover:text-primary-fixed text-xs font-label-sm uppercase tracking-wider">View All</a>
+            </div>
+            <div class="space-y-unit overflow-y-auto flex-1 pr-2">
+                @if (isLoadingScans)
+                {
+                    <div class="loading-container"><div class="loading-spinner"></div><span class="font-data-sm">Loading scans...</span></div>
+                }
+                else if (RecentScans != null && RecentScans.Count > 0)
+                {
+                    foreach (var scan in RecentScans)
+                    {
+                        var scoreColor = scan.Score >= 80 ? "tertiary" : scan.Score >= 50 ? "[#F59E0B]" : "error";
+                        <div @onclick="() => NavigateToReport(scan.Id)" class="repo-row bg-surface-container-low/80 backdrop-blur border border-outline-variant/30 border-l-2 border-l-@scoreColor rounded-DEFAULT p-3 flex items-center justify-between hover:bg-surface-container-high transition-colors cursor-pointer group">
+                            <div>
+                                <div class="font-data-md text-data-md text-on-surface group-hover:text-primary transition-colors">@scan.Id</div>
+                                <div class="font-body-md text-body-md text-outline text-xs mt-1">@scan.TimeAgo</div>
+                            </div>
+                            <div class="flex flex-col items-end">
+                                <span class="font-data-sm text-data-sm text-@scoreColor bg-@scoreColor/10 px-2 py-0.5 rounded-sm border border-@scoreColor/20 mb-1">@scan.Score/100</span>
+                                <span class="font-label-sm text-label-sm text-@scoreColor uppercase text-[10px]">@scan.Status</span>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="flex flex-col items-center justify-center py-8 gap-3">
+                        <span class="material-symbols-outlined text-outline text-3xl opacity-30">search_off</span>
+                        <p class="font-body-md text-outline text-sm">No recent scans</p>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Live Terminal -->
+        <div class="bg-surface-container-lowest border border-outline-variant/30 rounded-DEFAULT p-4 shadow-inner flex flex-col font-data-sm text-data-sm flex-1 min-h-0">
+            <div class="flex items-center justify-between border-b border-outline-variant/20 pb-2 mb-3 shrink-0">
+                <h3 class="font-label-md text-label-md text-outline flex items-center"><span class="material-symbols-outlined mr-2 text-sm">terminal</span> SCAN LOG / LIVE OUTPUT</h3>
+                <div class="flex space-x-2">
+                    <div class="w-2.5 h-2.5 rounded-full bg-error"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-[#F59E0B]"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-tertiary"></div>
+                </div>
+            </div>
+            <div id="terminalLog" class="flex-1 overflow-y-auto overflow-x-auto space-y-1.5 font-mono">
+                @if (Logs != null)
+                {
+                    foreach (var log in Logs)
+                    {
+                        <div class="flex log-line"><span class="text-outline mr-3">[@log.Time]</span><span class="text-@log.TextColorClass">[@log.Type] @log.Message</span></div>
+                    }
+                }
+                <div class="flex"><span class="text-outline mr-3">[@(DateTime.Now.ToString("HH:mm:ss.fff"))]</span><span class="text-accent terminal-cursor">_</span></div>
+            </div>
+        </div>
+
+        <!-- Scan Quota Bar -->
+        <!-- Scan Quota Bar -->
+        <div class="bg-surface-container-highest/40 border border-outline-variant/20 rounded-DEFAULT p-4 shrink-0">
+            @if (planType == "FREE")
+            {
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-label-sm text-label-sm text-outline uppercase tracking-wider">SCAN QUOTA (FREE)</span>
+                    <span class="font-data-sm text-data-sm @(isQuotaExhausted ? "text-error" : "text-primary")">@scansUsedThisMonth / @scansLimit</span>
+                </div>
+                <div class="w-full h-1.5 bg-surface-container rounded-full overflow-hidden quota-bar @(quotaPercentage > 80 ? "near-limit" : "")">
+                    <div class="h-full @(isQuotaExhausted ? "bg-error shadow-[0_0_8px_rgba(239,68,68,0.5)]" : "bg-primary shadow-[0_0_8px_rgba(173,198,255,0.5)]") progress-bar-smooth" style="width: @(quotaPercentage)%;"></div>
+                </div>
+            }
+            else if (planType == "PRO")
+            {
+                <div class="flex justify-between items-center">
+                    <span class="font-label-sm text-label-sm text-outline uppercase tracking-wider">SCAN QUOTA</span>
+                    <span class="px-2 py-0.5 rounded text-xs font-bold bg-[#3B82F6]/20 text-[#3B82F6] border border-[#3B82F6]/50 uppercase">Unlimited scans</span>
+                </div>
+            }
+            else if (planType == "TEAM")
+            {
+                <div class="flex justify-between items-center">
+                    <span class="font-label-sm text-label-sm text-outline uppercase tracking-wider">SCAN QUOTA</span>
+                    <span class="px-2 py-0.5 rounded text-xs font-bold bg-[#8B5CF6]/20 text-[#8B5CF6] border border-[#8B5CF6]/50 uppercase">Unlimited scans</span>
+                </div>
+            }
+        </div>
+    </div>
+</main>
+
+@code {
+    private ScanFormModel scanModel = new();
+    private List<RecentScan>? RecentScans;
+    private List<ScanLogEntry>? Logs;
+    private string repoUrl = "";
+    private string currentScanId = "";
+    private string scanStatus = "";
+    private string lastLoggedStage = "";
+    private string errorMessage = "";
+    private int progressPercent = 0;
+    private string repoSize = "";
+    private string estimatedTime = "";
+    private bool isScanning = false;
+    private bool isLoadingScans = true;
+    private CancellationTokenSource? _cts;
+    private string planType = "FREE";
+    private int scansUsedThisMonth = 0;
+    private int scansLimit = 3;
+    private bool isQuotaExhausted => planType == "FREE" && scansUsedThisMonth >= scansLimit;
+    private int quotaPercentage => (int)Math.Min(((double)scansUsedThisMonth / Math.Max(1, scansLimit)) * 100, 100);
+
+    private readonly string[] stages = { "CLONING", "ANALYSIS", "AI_REVIEW", "REPORT" };
+    private readonly string[] stageLabels = { "[SYSTEM] CLONING REPOSITORY", "[ANALYSIS] STATIC CODE REVIEW", "[AI_CORE] DEEP HEURISTIC REVIEW", "[OUTPUT] GENERATING REPORT" };
+
+    private static readonly System.Text.RegularExpressions.Regex GitHubUrlRegex = new(
+        @"^(https?://)?github\.com/[\w\-\.]+/[\w\-\.]+(\.git)?(/.*)?$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled,
+        TimeSpan.FromMilliseconds(100));
+
+    private bool IsValidGitHubUrl() =>
+        !string.IsNullOrWhiteSpace(scanModel.RepoUrl) && GitHubUrlRegex.IsMatch(scanModel.RepoUrl.Trim());
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+
+            // Fetch Plan Info
+            var planInfo = await client.GetFromJsonAsync<Settings.PlanInfoModel>("api/user/plan");
+            if (planInfo != null)
+            {
+                planType = planInfo.PlanType;
+                scansUsedThisMonth = planInfo.ScansThisMonth;
+                scansLimit = planInfo.Limit;
+            }
+
+            // Fetch real scan history from API
+            var history = await client.GetFromJsonAsync<List<RecentScan>>("api/scan/history");
+            if (history != null && history.Count > 0)
+            {
+                RecentScans = history;
+            }
+            else
+            {
+                RecentScans = new List<RecentScan>();
+            }
+        }
+        catch
+        {
+            RecentScans = new List<RecentScan>();
+        }
+        finally
+        {
+            isLoadingScans = false;
+        }
+    }
+
+    private async Task ScrollTerminal()
+    {
+        try { await JS.InvokeVoidAsync("codeSentryInterop.scrollTerminalToBottom"); } catch { }
+    }
+
+    private void AddLog(string type, string message, string color = "tertiary")
+    {
+        Logs ??= new List<ScanLogEntry>();
+        Logs.Add(new ScanLogEntry { Time = DateTime.Now.ToString("HH:mm:ss.fff"), Type = type, Message = message, TextColorClass = color });
+    }
+
+    private int GetStageIndex(string stage) => stage switch
+    {
+        "CLONING" => 0, "ANALYSIS" => 1, "AI_REVIEW" => 2, "REPORT" => 3, "COMPLETED" => 4, "FAILED" => -1, _ => -2
+    };
+
+    private async Task StartScan()
+    {
+        // Validation handled by EditForm + DataAnnotationsValidator
+        errorMessage = "";
+        if (isScanning) return;
+        repoUrl = scanModel.RepoUrl.Trim(); // keep repoUrl in sync for log display
+        isScanning = true;
+        lastLoggedStage = "";
+        scanStatus = "";
+        progressPercent = 0;
+        repoSize = "";
+        estimatedTime = "";
+        Logs = new List<ScanLogEntry>();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var response = await client.PostAsJsonAsync("api/scan/start", new { RepoUrl = repoUrl });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+                currentScanId = result.GetProperty("scanId").GetString() ?? "";
+                AddLog("SYSTEM", $"Scan initiated - ID: {currentScanId}", "primary");
+                AddLog("SYSTEM", $"Target: {repoUrl}", "on-surface-variant");
+                StateHasChanged();
+                await ScrollTerminal();
+
+                _cts?.Cancel();
+                _cts = new CancellationTokenSource();
+                AddLog("SYSTEM", "Monitoring scan status via polling...", "outline");
+                _ = PollStatus(_cts.Token);
+            }
+            else
+            {
+                errorMessage = $"API error: {response.StatusCode}";
+                Toast.ShowError($"Scan failed: {response.StatusCode}");
+                isScanning = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Cannot reach scan service: {ex.Message}";
+            Toast.ShowError("Cannot reach the scan service. Please check your connection.");
+            isScanning = false;
+        }
+        StateHasChanged();
+        await ScrollTerminal();
+    }
+
+    private async Task RetryScan()
+    {
+        errorMessage = "";
+        await StartScan();
+    }
+
+
+
+    private async Task PollStatus(CancellationToken cancellationToken)
+    {
+        var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+        while (!string.IsNullOrEmpty(currentScanId) && !cancellationToken.IsCancellationRequested)
+        {
+            try { await Task.Delay(1500, cancellationToken); }
+            catch (TaskCanceledException) { break; }
+
+            try
+            {
+                var status = await client.GetFromJsonAsync<JsonElement>($"api/scan/{currentScanId}/status");
+                var newStage = status.GetProperty("status").GetString() ?? "";
+                progressPercent = status.GetProperty("progressPercent").GetInt32();
+
+                if (status.TryGetProperty("repoSize", out var sizeProp))
+                    repoSize = sizeProp.GetString() ?? "";
+                if (status.TryGetProperty("estimatedTime", out var timeProp))
+                    estimatedTime = timeProp.GetString() ?? "";
+
+                if (newStage != lastLoggedStage)
+                {
+                    scanStatus = newStage;
+                    lastLoggedStage = newStage;
+                    switch (newStage)
+                    {
+                        case "CLONING":   AddLog("SYSTEM",   "Cloning repository...",               "tertiary");           break;
+                        case "ANALYSIS":  AddLog("ANALYSIS", "Static code review in progress...",    "on-surface-variant"); break;
+                        case "AI_REVIEW": AddLog("AI_CORE",  "Deep heuristic review initiated...",   "primary");            break;
+                        case "REPORT":    AddLog("OUTPUT",   "Compiling scan report...",              "on-surface-variant"); break;
+                        case "COMPLETED":
+                            scansUsedThisMonth++;
+                            AddLog("COMPLETED", "Scan complete - redirecting to report...", "tertiary");
+                            StateHasChanged(); await ScrollTerminal();
+                            await Task.Delay(1500, cancellationToken);
+                            isScanning = false;
+                            await RefreshHistoryAsync();
+                            Nav.NavigateTo($"/reports?scanId={currentScanId}");
+                            return;
+                        case "FAILED":
+                            AddLog("FAILED", status.GetProperty("message").GetString() ?? "Unknown error", "error");
+                            isScanning = false;
+                            StateHasChanged(); await ScrollTerminal();
+                            return;
+                    }
+                }
+                else { scanStatus = newStage; }
+                StateHasChanged(); await ScrollTerminal();
+            }
+            catch
+            {
+                AddLog("ERROR", "Lost connection to scan service.", "error");
+                isScanning = false;
+                StateHasChanged(); await ScrollTerminal();
+                break;
+            }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Register keyboard shortcuts: Ctrl+Enter = scan, Escape = cancel
+            // JS clicks the DOM buttons directly - no DotNetObjectReference needed
+            await JS.InvokeVoidAsync("codeSentryInterop.registerKeyboardShortcuts",
+                "btn-initialize-scan", "btn-cancel-scan");
+        }
+    }
+
+    private async Task CancelScan()
+    {
+        if (isScanning)
+        {
+            _cts?.Cancel();
+            isScanning = false;
+            AddLog("SYSTEM", "Scan cancelled by user.", "error");
+            Toast.ShowInfo("Scan cancelled.");
+            StateHasChanged();
+            await ScrollTerminal();
+        }
+    }
+
+    private async Task RefreshHistoryAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var history = await client.GetFromJsonAsync<List<RecentScan>>("api/scan/history");
+            if (history != null)
+            {
+                RecentScans = history;
+            }
+            
+            var planInfo = await client.GetFromJsonAsync<Settings.PlanInfoModel>("api/user/plan");
+            if (planInfo != null)
+            {
+                scansUsedThisMonth = planInfo.ScansThisMonth;
+            }
+        }
+        catch { }
+    }
+
+
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        // Unregister keyboard shortcuts on component disposal
+        try { await JS.InvokeVoidAsync("codeSentryInterop.unregisterKeyboardShortcuts"); } catch { }
+    }
+
+    private void NavigateToReport(string scanId) => Nav.NavigateTo($"/reports?scanId={scanId}");
+}

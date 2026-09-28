@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/CodeSentryAI/">
+    <Project Path="CodeSentry.Client/CodeSentry.Client.csproj" />
+  </Folder>
+  <Project Path="CodeSentry.API/CodeSentry.API.csproj" />
+</Solution>

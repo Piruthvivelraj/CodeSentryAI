@@ -1,0 +1,352 @@
+@page "/dashboard"
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject CodeSentryAI.Services.ToastService Toast
+@using CodeSentryAI.Services
+@using CodeSentryAI.Shared
+
+<PageTitle>CodeSentry AI - Dashboard</PageTitle>
+
+<main class="lg:ml-[64px] mt-[48px] p-margin w-full lg:w-[calc(100%-64px)] h-[calc(100vh-48px)] overflow-hidden flex flex-col gap-6 page-enter page-wrapper">
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="flex flex-col items-center justify-center flex-1 gap-6">
+            <span class="material-symbols-outlined text-error text-5xl opacity-70">cloud_off</span>
+            <p class="font-data-md text-error text-center">@errorMessage</p>
+            <button @onclick="RetryLoad" class="bg-primary/20 border border-primary text-primary px-6 py-2 font-label-md uppercase hover:bg-primary/30 transition-all rounded flex items-center gap-2">
+                <span class="material-symbols-outlined text-sm">refresh</span> RETRY
+            </button>
+        </div>
+    }
+    else
+    {
+        <!-- Top Row -->
+        <div class="grid grid-cols-12 gap-6 shrink-0">
+            <!-- Tech Debt Score -->
+            <div class="hex-gauge col-span-12 lg:col-span-4 glass-panel level-1-border rounded relative overflow-hidden flex flex-col items-center justify-center p-6 bg-[#0F1117]" style="box-shadow: inset 20px 20px 60px -30px rgba(59, 130, 246, 0.2);">
+                <div class="absolute top-0 left-0 w-48 h-48 bg-primary/20 rounded-full blur-3xl -ml-16 -mt-16 pointer-events-none"></div>
+                <h2 class="font-section-header text-outline tracking-widest uppercase self-start w-full border-b border-outline-variant/30 pb-2 mb-4">Avg Health Score</h2>
+                @if (isLoading)
+                {
+                    <SkeletonLoader Type="default" Count="1" />
+                }
+                else
+                {
+                    <div class="relative flex items-center justify-center w-48 h-48">
+                        <svg class="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" fill="none" r="44" stroke="rgba(59, 130, 246, 0.1)" stroke-width="4"></circle>
+                            <circle class="drop-shadow-[0_0_8px_#3B82F6]" cx="50" cy="50" fill="none" r="44" stroke="@(CodeSentryAI.Utils.UIHelper.GetScoreHex(avgScore))" stroke-dasharray="188.5" stroke-dashoffset="@GetDashOffset(avgScore)" stroke-linecap="round" stroke-width="4"></circle>
+                        </svg>
+                        <div class="relative z-10 flex flex-col items-center mt-2">
+                            <span class="font-data-lg text-5xl drop-shadow-[0_0_15px_rgba(173,198,255,1)]" style="color: @(CodeSentryAI.Utils.UIHelper.GetScoreHex(avgScore))">@avgScore</span>
+                            <span class="font-label-sm uppercase tracking-[0.3em] mt-1" style="color: @(CodeSentryAI.Utils.UIHelper.GetScoreHex(avgScore)); opacity:0.7;">@CodeSentryAI.Utils.UIHelper.GetScoreLabel(avgScore)</span>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- Trend Chart -->
+            <div class="col-span-12 lg:col-span-4 glass-panel level-1-border rounded p-6 flex flex-col bg-[#0F1117] relative overflow-hidden" style="box-shadow: inset 20px 20px 60px -30px rgba(59, 130, 246, 0.2);">
+                <h3 class="font-section-header text-outline tracking-widest uppercase mb-4 w-full border-b border-outline-variant/30 pb-2">Health Trend (Last 5)</h3>
+                @if (isLoading)
+                {
+                    <SkeletonLoader Type="default" Count="1" />
+                }
+                else
+                {
+                    <div class="flex-1 flex items-end justify-between gap-3 h-32 pt-2">
+                        @foreach (var repo in repoList?.Take(5).Reverse() ?? Enumerable.Empty<RepositoryTelemetry>())
+                        {
+                            var score = repo.Coverage;
+                            var color = CodeSentryAI.Utils.UIHelper.GetScoreHex(score);
+                            <div class="flex flex-col items-center flex-1 h-full justify-end group cursor-pointer" title="@repo.Id">
+                                <span class="font-data-sm text-[11px] mb-1 opacity-0 group-hover:opacity-100 transition-opacity" style="color: @color;">@score</span>
+                                <div class="w-full rounded-t-sm transition-all duration-300 hover:brightness-125 hover:-translate-y-1" style="height: @(score)%; background: @color; opacity: 0.85; box-shadow: 0 -5px 15px @(color)40;"></div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <!-- Metric Cards -->
+            <div class="col-span-12 lg:col-span-4 grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
+                @if (isLoading)
+                {
+                    <SkeletonLoader Type="card" Count="4" />
+                }
+                else
+                {
+                    <div class="metric-card glass-panel level-1-border border-l-2 border-l-primary rounded p-5 flex flex-col justify-between relative overflow-hidden bg-[#0F1117]" style="box-shadow: inset 20px 20px 60px -30px rgba(59, 130, 246, 0.2);">
+                        <div class="absolute right-0 top-0 h-full w-1/2 bg-gradient-to-l from-primary/5 to-transparent pointer-events-none"></div>
+                        <h3 class="font-label-md text-outline uppercase">Total Repos</h3>
+                        <div class="flex items-end justify-between mt-4">
+                            <span id="stat-total-repos" class="font-data-lg text-white text-4xl">@totalRepos</span>
+                            <span class="font-data-sm text-tertiary flex items-center"><span class="material-symbols-outlined text-sm mr-1">arrow_downward</span> Scans</span>
+                        </div>
+                    </div>
+                    <div class="metric-card glass-panel level-1-border border-l-2 border-l-secondary-container rounded p-5 flex flex-col justify-between relative overflow-hidden bg-[#0F1117]">
+                        <div class="absolute right-0 top-0 h-full w-1/2 bg-gradient-to-l from-secondary-container/5 to-transparent pointer-events-none"></div>
+                        <h3 class="font-label-md text-outline uppercase">Total Issues</h3>
+                        <div class="flex items-end justify-between mt-4">
+                            <span id="stat-total-issues" class="font-data-lg text-white text-4xl">@totalIssues.ToString("N0")</span>
+                            <span class="font-data-sm text-tertiary flex items-center"><span class="material-symbols-outlined text-sm mr-1">arrow_upward</span> Found</span>
+                        </div>
+                    </div>
+                    <div class="metric-card glass-panel level-1-border border-l-2 border-l-error rounded p-5 flex flex-col justify-between relative overflow-hidden bg-[#0F1117]">
+                        <div class="absolute right-0 top-0 h-full w-1/2 bg-gradient-to-l from-error/5 to-transparent pointer-events-none"></div>
+                        <h3 class="font-label-md text-outline uppercase">Critical Issues</h3>
+                        <div class="flex items-end justify-between mt-4">
+                            <span id="stat-total-critical" class="font-data-lg text-error text-4xl">@totalCritical.ToString("D2")</span>
+                            <span class="font-data-sm text-error flex items-center"><span class="material-symbols-outlined text-sm mr-1">warning</span> CRIT</span>
+                        </div>
+                    </div>
+                    <div class="metric-card glass-panel level-1-border border-l-2 border-l-[#F59E0B] rounded p-5 flex flex-col justify-between relative overflow-hidden bg-[#0F1117]">
+                        <div class="absolute right-0 top-0 h-full w-1/2 bg-gradient-to-l from-[#F59E0B]/5 to-transparent pointer-events-none"></div>
+                        <h3 class="font-label-md text-outline uppercase">Tech Debt</h3>
+                        <div class="flex items-end justify-between mt-4">
+                            <span class="font-data-lg text-[#F59E0B] text-4xl"><span id="stat-total-debt">@totalDebtHours</span><span class="inline text-xl">h</span></span>
+                            <span class="font-data-sm text-[#F59E0B] flex items-center"><span class="material-symbols-outlined text-sm mr-1">schedule</span> EST.</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Recent Scans Table -->
+        <div class="glass-panel level-1-border rounded flex flex-col bg-[#0F1117] flex-1 min-h-[200px] overflow-hidden">
+            <div class="p-4 border-b border-outline-variant/30 flex justify-between items-center bg-surface/50 shrink-0 flex-wrap gap-3">
+                <h2 class="font-section-header text-outline tracking-widest uppercase">Scan History</h2>
+                <div class="flex items-center gap-3">
+                    <SearchBar @bind-Value="historySearch" Placeholder="Search repositories..." />
+                    <span class="font-data-sm text-outline text-sm whitespace-nowrap">@filteredRepoList.Count scans</span>
+                </div>
+            </div>
+            <div class="w-full overflow-y-auto flex-1">
+                @if (isLoading)
+                {
+                    <table class="w-full text-left border-collapse">
+                        <thead class="sticky top-0 bg-[#0F1117] z-10 shadow-sm border-b border-outline-variant/50">
+                            <tr>
+                                <th class="font-label-sm text-outline uppercase px-5 py-4 font-semibold">Repository</th>
+                                <th class="font-label-sm text-outline uppercase px-5 py-4 font-semibold hidden md:table-cell">Last Scan</th>
+                                <th class="font-label-sm text-outline uppercase px-5 py-4 font-semibold hidden md:table-cell">Issues</th>
+                                <th class="font-label-sm text-outline uppercase px-5 py-4 font-semibold text-right">Health Score</th>
+                                <th class="font-label-sm text-outline uppercase px-5 py-4 font-semibold text-right w-10"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <SkeletonLoader Type="table" Count="5" Columns="5" />
+                        </tbody>
+                    </table>
+                }
+                else if (filteredRepoList.Count > 0)
+                {
+                    <table class="w-full text-left border-collapse">
+                        <thead class="sticky top-0 bg-[#0F1117] z-10 shadow-sm border-b border-outline-variant/50">
+                            <tr>
+                                <th @onclick='() => SortHistory("Name")' class="font-label-sm text-outline uppercase px-5 py-4 font-semibold cursor-pointer hover:text-primary">Repository</th>
+                                <th @onclick='() => SortHistory("LastScan")' class="font-label-sm text-outline uppercase px-5 py-4 font-semibold hidden md:table-cell cursor-pointer hover:text-primary">Last Scan</th>
+                                <th class="font-label-sm text-outline uppercase px-5 py-4 font-semibold hidden md:table-cell">Issues</th>
+                                <th @onclick='() => SortHistory("Coverage")' class="font-label-sm text-outline uppercase px-5 py-4 font-semibold text-right cursor-pointer hover:text-primary">Health Score</th>
+                                <th class="font-label-sm text-outline uppercase px-5 py-4 font-semibold text-right w-10"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="font-data-sm text-white">
+                            @foreach (var repo in filteredRepoList)
+                            {
+                                var score = repo.Coverage;
+                                var color = score >= 80 ? "#10B981" : score >= 50 ? "#F59E0B" : "#EF4444";
+                                <tr class="repo-row border-b border-outline-variant/20 cursor-pointer row-stripe border-l-[4px] hover:bg-white/5 transition-all group" style="border-left-color: @color;">
+                                    <td class="px-5 py-4" style="color: @color;" @onclick="() => NavigateToReport(repo.Id)">
+                                        @(string.IsNullOrEmpty(repo.Name) ? repo.Id : repo.Name)
+                                    </td>
+                                    <td class="px-5 py-4 text-outline hidden md:table-cell" @onclick="() => NavigateToReport(repo.Id)">@TimeHelper.ToRelativeTime(repo.LastScan)</td>
+                                    <td class="px-5 py-4 text-outline hidden md:table-cell" @onclick="() => NavigateToReport(repo.Id)">
+                                        <span class="inline-flex items-center px-2 py-1 rounded border border-outline-variant/30 bg-[#0F1117]/50 font-data-sm text-[11px] tracking-wider shadow-sm">
+                                            <span class="text-error font-bold">@(repo.CriticalCount)C</span>
+                                            <span class="text-outline/50 mx-1.5">/</span>
+                                            <span class="text-[#F59E0B] font-bold">@(repo.WarningCount)W</span>
+                                        </span>
+                                    </td>
+                                    <td class="px-5 py-4 text-right" @onclick="() => NavigateToReport(repo.Id)">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-full border font-label-sm text-[10px] uppercase tracking-wider" style="color: @color; border-color: @color; background: @(color)1a;">
+                                            <div class="w-1.5 h-1.5 rounded-full mr-1" style="background: @color;"></div> @score/100
+                                        </span>
+                                    </td>
+                                    <td class="px-5 py-4 text-right">
+                                        <button @onclick:stopPropagation="true"
+                                                @onclick="() => PromptDeleteScan(repo)"
+                                                title="Delete scan"
+                                                class="opacity-0 group-hover:opacity-100 transition-opacity text-error hover:text-error/80">
+                                            <span class="material-symbols-outlined text-base">delete</span>
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else if (repoList != null && repoList.Count > 0)
+                {
+                    <!-- search returned no results -->
+                    <div class="flex flex-col items-center justify-center py-16 gap-4">
+                        <span class="material-symbols-outlined text-outline text-5xl opacity-30">search_off</span>
+                        <p class="font-body-md text-outline text-center">No results for "@historySearch"</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="flex flex-col items-center justify-center py-16 gap-4">
+                        <span class="material-symbols-outlined text-outline text-5xl opacity-30">search_off</span>
+                        <p class="font-body-md text-outline text-center">No scans yet - run your first scan</p>
+                        <button @onclick='() => Nav.NavigateTo("/scan")' class="bg-accent text-white font-label-md px-6 py-3 rounded flex items-center gap-2 shadow-[0_0_15px_rgba(59,130,246,0.4)] btn-primary">
+                            <span class="material-symbols-outlined">bolt</span> START SCANNING
+                        </button>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</main>
+
+<!-- Delete Scan Confirmation -->
+<ConfirmDialog IsVisible="showDeleteConfirm"
+               Title="Delete Scan?"
+               Message="@($"Permanently delete scan for '{deleteScanTarget?.Name ?? deleteScanTarget?.Id}'? This action cannot be undone.")"
+               ConfirmLabel="Delete"
+               Danger="true"
+               OnConfirm="ExecuteDeleteScan"
+               OnCancel="@(() => showDeleteConfirm = false)" />
+
+@code {
+    private List<RepositoryTelemetry>? repoList;
+    private DashboardStats? stats;
+    private bool isLoading = true;
+    private string errorMessage = "";
+    private int totalRepos = 0;
+    private int avgScore = 0;
+    private int totalIssues = 0;
+    private int totalCritical = 0;
+    private int totalDebtHours = 0;
+
+    // Search
+    private string historySearch = "";
+    private List<RepositoryTelemetry> filteredRepoList
+    {
+        get
+        {
+            var list = repoList == null ? new()
+                : string.IsNullOrWhiteSpace(historySearch)
+                    ? repoList
+                    : repoList.Where(r =>
+                        (r.Name ?? r.Id).Contains(historySearch, StringComparison.OrdinalIgnoreCase) ||
+                        r.Id.Contains(historySearch, StringComparison.OrdinalIgnoreCase)
+                      ).ToList();
+
+            return historySortColumn switch
+            {
+                "Name"     => historySortAscending ? list.OrderBy(r => r.Name ?? r.Id).ToList() : list.OrderByDescending(r => r.Name ?? r.Id).ToList(),
+                "Coverage" => historySortAscending ? list.OrderBy(r => r.Coverage).ToList() : list.OrderByDescending(r => r.Coverage).ToList(),
+                _          => historySortAscending ? list.OrderBy(r => r.LastScan).ToList() : list.OrderByDescending(r => r.LastScan).ToList()
+            };
+        }
+    }
+
+    // Delete
+    private bool showDeleteConfirm = false;
+    private RepositoryTelemetry? deleteScanTarget = null;
+
+    // Sorting
+    private string historySortColumn = "LastScan";
+    private bool historySortAscending = false;
+
+    private void SortHistory(string column)
+    {
+        if (historySortColumn == column) historySortAscending = !historySortAscending;
+        else { historySortColumn = column; historySortAscending = column == "LastScan" ? false : true; }
+        StateHasChanged();
+    }
+
+    protected override async Task OnInitializedAsync() => await LoadDataAsync();
+
+    private async Task RetryLoad()
+    {
+        isLoading = true;
+        errorMessage = "";
+        StateHasChanged();
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+
+            stats = await client.GetFromJsonAsync<DashboardStats>("api/scan/stats");
+            if (stats != null)
+            {
+                totalRepos      = stats.totalScans;
+                avgScore        = stats.avgScore;
+                totalIssues     = stats.totalIssues;
+                totalCritical   = stats.criticalIssues;
+                totalDebtHours  = stats.techDebtHours;
+            }
+
+            var repos = await client.GetFromJsonAsync<List<RepositoryTelemetry>>("api/repo/recent");
+            repoList = repos?.Count > 0 ? repos : new List<RepositoryTelemetry>();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Unable to load dashboard data. Is the API running? ({ex.Message})";
+            repoList = new List<RepositoryTelemetry>();
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+            try {
+                await Task.Delay(100);
+                await JS.InvokeVoidAsync("codeSentryInterop.countUp", "stat-total-repos", totalRepos, 1000);
+                await JS.InvokeVoidAsync("codeSentryInterop.countUp", "stat-total-issues", totalIssues, 1000);
+                await JS.InvokeVoidAsync("codeSentryInterop.countUp", "stat-total-critical", totalCritical, 1000);
+                await JS.InvokeVoidAsync("codeSentryInterop.countUp", "stat-total-debt", totalDebtHours, 1000);
+            } catch {}
+        }
+    }
+
+    private void NavigateToReport(string repoId) => Nav.NavigateTo($"/reports?scanId={repoId}");
+
+    private void PromptDeleteScan(RepositoryTelemetry repo)
+    {
+        deleteScanTarget  = repo;
+        showDeleteConfirm = true;
+    }
+
+    private async Task ExecuteDeleteScan()
+    {
+        showDeleteConfirm = false;
+        if (deleteScanTarget == null) return;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CodeSentryAPI");
+            var response = await client.DeleteAsync($"api/scan/{deleteScanTarget.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                repoList?.Remove(deleteScanTarget);
+                Toast.ShowSuccess("Scan deleted.");
+                StateHasChanged();
+            }
+            else
+            {
+                Toast.ShowError("Failed to delete scan.");
+            }
+        }
+        catch { Toast.ShowError("Error deleting scan."); }
+    }
+
+    private string GetDashOffset(int score) =>
+        (276.5 - (score / 100.0 * 276.5)).ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+}
